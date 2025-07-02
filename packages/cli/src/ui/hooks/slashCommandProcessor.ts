@@ -11,6 +11,7 @@ import process from 'node:process';
 import { UseHistoryManagerReturn } from './useHistoryManager.js';
 import { useStateAndRef } from './useStateAndRef.js';
 import {
+  AuthType,
   Config,
   GitService,
   Logger,
@@ -247,6 +248,15 @@ export const useSlashCommandProcessor = (
         name: 'auth',
         description: 'change the auth method',
         action: (_mainCommand, _subCommand, _args) => {
+          if (settings.merged.selectedAuthType === AuthType.CUSTOM) {
+            addMessage({
+              type: MessageType.ERROR,
+              content:
+                'Cannot open Auth Dialog when using custom auth method. Please modify your settings manually.',
+              timestamp: new Date(),
+            });
+            return;
+          }
           openAuthDialog();
         },
       },

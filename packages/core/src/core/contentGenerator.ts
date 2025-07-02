@@ -38,6 +38,7 @@ export enum AuthType {
   LOGIN_WITH_GOOGLE = 'oauth-personal',
   USE_GEMINI = 'gemini-api-key',
   USE_VERTEX_AI = 'vertex-ai',
+  CUSTOM = 'custom',
 }
 
 export type ContentGeneratorConfig = {
@@ -65,8 +66,7 @@ export async function createContentGeneratorConfig(
     authType,
   };
 
-  // if we are using google auth nothing else to validate for now
-  if (authType === AuthType.LOGIN_WITH_GOOGLE) {
+  if (authType === AuthType.LOGIN_WITH_GOOGLE || authType === AuthType.CUSTOM) {
     return contentGeneratorConfig;
   }
 
@@ -128,6 +128,10 @@ export async function createContentGenerator(
     });
 
     return googleGenAI.models;
+  }
+
+  if (config.authType === AuthType.CUSTOM) {
+    return new GoogleGenAI({ httpOptions }).models;
   }
 
   throw new Error(
