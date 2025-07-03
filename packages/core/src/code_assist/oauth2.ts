@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { OAuth2Client, Credentials, GoogleAuth } from 'google-auth-library';
+import { OAuth2Client, Credentials, Compute } from 'google-auth-library';
 import * as http from 'http';
 import url from 'url';
 import crypto from 'crypto';
@@ -64,6 +64,7 @@ export async function getOauthClient(): Promise<OAuth2Client> {
     await cacheCredentials(tokens);
   });
 
+  // If there are cached creds on disk, they always take precedence
   if (await loadCachedCredentials(client)) {
     // Found valid cached credentials.
     // Check if we need to retrieve Google Account ID
@@ -80,35 +81,24 @@ export async function getOauthClient(): Promise<OAuth2Client> {
     return client;
   }
 
-  // In Google Cloud Shell, we can use Application Default Credentials
-  // to authenticate non-interactively.
+  // In Google Cloud Shell, we can use Application Default Credentials (ADC)
+  // provided via its metadata server to authenticate non-interactively using 
+  // the identity of the user logged into Cloud Shell.
   if (process.env.CLOUD_SHELL === 'true') {
     try {
       // If no cached credentials, use ADC.
       console.log(
-        'Attempting to authenticate via Application Default Credentials.',
+        'Attempting to authenticate via GCP VM\'s Application Default Credentials.',
       );
-      const auth = new GoogleAuth({
-        scopes: OAUTH_SCOPE,
+      const computeClient = new Compute({
+        // We can leave this empty, since the metadata server will provide
+        // the service account email.
       });
-      const adcClient = (await auth.getClient()) as OAuth2Client;
-
-      // Manually trigger token caching
-      const token = await adcClient.getAccessToken();
-      if (token) {
-        await cacheCredentials(adcClient.credentials);
-      }
-
-      try {
-        const googleAccountId = await getGoogleAccountId(adcClient);
-        if (googleAccountId) {
-          await cacheGoogleAccountId(googleAccountId);
-        }
-      } catch (_error) {
-        // Non-fatal
-      }
+      await computeClient.getAccessToken();
       console.log('Authentication successful.');
-      return adcClient;
+
+      // Do not cache creds in this case; note that Compute client will handle its own refresh
+      return computeClient;
     } catch (e) {
       throw new Error(
         `Could not authenticate with Application Default Credentials. Please ensure you are in a properly configured environment. Error: ${getErrorMessage(
@@ -118,6 +108,7 @@ export async function getOauthClient(): Promise<OAuth2Client> {
     }
   }
 
+  // Otherwise, obtain creds using standard web flow
   const webLogin = await authWithWeb(client);
 
   console.log(

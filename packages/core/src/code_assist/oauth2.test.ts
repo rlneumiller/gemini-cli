@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import { getOauthClient, getCachedGoogleAccountId } from './oauth2.js';
-import { OAuth2Client, GoogleAuth } from 'google-auth-library';
+import { OAuth2Client, Compute } from 'google-auth-library';
 import * as fs from 'fs';
 import * as path from 'path';
 import http from 'http';
@@ -37,7 +37,7 @@ describe('oauth2', () => {
     tempHomeDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'gemini-cli-test-home-'),
     );
-    vi.mocked(os.homedir).mockReturnValue(tempHomeDir);
+    (os.homedir as Mock).mockReturnValue(tempHomeDir);
   });
   afterEach(() => {
     fs.rmSync(tempHomeDir, { recursive: true, force: true });
@@ -68,13 +68,15 @@ describe('oauth2', () => {
       credentials: mockTokens,
       on: vi.fn(),
     } as unknown as OAuth2Client;
-    vi.mocked(OAuth2Client).mockImplementation(() => mockOAuth2Client);
+    (OAuth2Client as unknown as Mock).mockImplementation(
+      () => mockOAuth2Client,
+    );
 
     vi.spyOn(crypto, 'randomBytes').mockReturnValue(mockState as never);
-    vi.mocked(open).mockImplementation(async () => ({}) as never);
+    (open as Mock).mockImplementation(async () => ({}) as never);
 
     // Mock the UserInfo API response
-    vi.mocked(global.fetch).mockResolvedValue({
+    (global.fetch as Mock).mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue({ id: 'test-google-account-id-123' }),
     } as unknown as Response);
@@ -106,7 +108,7 @@ describe('oauth2', () => {
       on: vi.fn(),
       address: () => ({ port: capturedPort }),
     };
-    vi.mocked(http.createServer).mockImplementation((cb) => {
+    (http.createServer as Mock).mockImplementation((cb) => {
       requestCallback = cb as http.RequestListener<
         typeof http.IncomingMessage,
         typeof http.ServerResponse
@@ -154,8 +156,8 @@ describe('oauth2', () => {
   });
 
   describe('in Cloud Shell', () => {
-    const mockGetClient = vi.fn();
     const mockGetAccessToken = vi.fn();
+    let mockComputeClient: Compute;
 
     beforeEach(() => {
       process.env.CLOUD_SHELL = 'true';
@@ -166,19 +168,13 @@ describe('oauth2', () => {
         new Error('File not found'),
       ); // Default to no cached creds
 
-      const mockClient = {
+      mockGetAccessToken.mockResolvedValue({ token: 'test-access-token' });
+      mockComputeClient = {
         credentials: { refresh_token: 'test-refresh-token' },
         getAccessToken: mockGetAccessToken,
-      };
+      } as unknown as Compute;
 
-      mockGetClient.mockResolvedValue(mockClient);
-      vi.mocked(GoogleAuth).mockImplementation(
-        () =>
-          ({
-            getClient: mockGetClient,
-          }) as unknown as GoogleAuth,
-      );
-      mockGetAccessToken.mockResolvedValue({ token: 'test-access-token' });
+      (Compute as unknown as Mock).mockImplementation(() => mockComputeClient);
     });
 
     it('should attempt to load cached credentials first', async () => {
@@ -195,7 +191,7 @@ describe('oauth2', () => {
       };
 
       // To mock the new OAuth2Client() inside the function
-      vi.mocked(OAuth2Client).mockImplementation(
+      (OAuth2Client as unknown as Mock).mockImplementation(
         () => mockClient as unknown as OAuth2Client,
       );
 
@@ -208,29 +204,19 @@ describe('oauth2', () => {
       expect(mockClient.setCredentials).toHaveBeenCalledWith(cachedCreds);
       expect(mockClient.getAccessToken).toHaveBeenCalled();
       expect(mockClient.getTokenInfo).toHaveBeenCalled();
-      expect(mockGetClient).not.toHaveBeenCalled(); // Should not fetch new client if cache is valid
+      expect(Compute).not.toHaveBeenCalled(); // Should not fetch new client if cache is valid
     });
 
-    it('should use GoogleAuth to get a client if no cached credentials exist', async () => {
+    it('should use Compute to get a client if no cached credentials exist', async () => {
       await getOauthClient();
 
-      expect(GoogleAuth).toHaveBeenCalledWith({
-        scopes: [
-          'https://www.googleapis.com/auth/cloud-platform',
-          'https://www.googleapis.com/auth/userinfo.email',
-          'https://www.googleapis.com/auth/userinfo.profile',
-        ],
-      });
-      expect(mockGetClient).toHaveBeenCalled();
+      expect(Compute).toHaveBeenCalledWith({});
+      expect(mockGetAccessToken).toHaveBeenCalled();
     });
 
     it('should cache the credentials after fetching them via ADC', async () => {
       const newCredentials = { refresh_token: 'new-adc-token' };
-      const mockClient = {
-        credentials: newCredentials,
-        getAccessToken: mockGetAccessToken,
-      };
-      mockGetClient.mockResolvedValue(mockClient);
+      mockComputeClient.credentials = newCredentials;
 
       await getOauthClient();
 
@@ -240,21 +226,14 @@ describe('oauth2', () => {
       );
     });
 
-    it('should return the OAuth2Client on successful ADC authentication', async () => {
-      const mockClient = {
-        credentials: { refresh_token: 'test-refresh-token' },
-        getAccessToken: mockGetAccessToken,
-      };
-      mockGetClient.mockResolvedValue(mockClient);
-
+    it('should return the Compute client on successful ADC authentication', async () => {
       const client = await getOauthClient();
-
-      expect(client).toBe(mockClient);
+      expect(client).toBe(mockComputeClient);
     });
 
     it('should throw an error if ADC fails', async () => {
       const testError = new Error('ADC Failed');
-      mockGetClient.mockRejectedValue(testError);
+      mockGetAccessToken.mockRejectedValue(testError);
 
       await expect(getOauthClient()).rejects.toThrow(
         'Could not authenticate with Application Default Credentials. Please ensure you are in a properly configured environment. Error: ADC Failed',
