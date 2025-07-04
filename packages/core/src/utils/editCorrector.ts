@@ -13,9 +13,15 @@ import {
 import { GeminiClient } from '../core/client.js';
 import { EditToolParams, EditTool } from '../tools/edit.js';
 import { WriteFileTool } from '../tools/write-file.js';
+import { ReadFileTool } from '../tools/read-file.js';
+import { ReadManyFilesTool } from '../tools/read-many-files.js';
+import { GrepTool } from '../tools/grep.js';
 import { LruCache } from './LruCache.js';
 import { DEFAULT_GEMINI_FLASH_MODEL } from '../config/models.js';
-import { isFunctionResponse } from '../utils/messageInspectors.js';
+import {
+  isFunctionResponse,
+  isFunctionCall,
+} from '../utils/messageInspectors.js';
 import * as fs from 'fs';
 
 const EditModel = DEFAULT_GEMINI_FLASH_MODEL;
@@ -53,6 +59,23 @@ export interface CorrectedEditResult {
 }
 
 /**
+ * Extracts the timestamp from the .id value, which is in format
+ * <tool.name>-<timestamp>-<uuid>
+ * @param fcnId the ID value of a functionCall or functionResponse object
+ * @returns -1 if the timestamp could not be extracted, else the timestamp (as a number)
+ */
+function getTimestampFromFunctionId(fcnId: string): number {
+  const idParts = fcnId.split('-');
+  if (idParts.length > 2) {
+    const timestamp = parseInt(idParts[1], 10);
+    if (!isNaN(timestamp)) {
+      return timestamp;
+    }
+  }
+  return -1;
+}
+
+/**
  * Will look through the gemini client history and determine when the most recent
  * edit to a target file occured. If no edit happened, it will return -1
  * @param filePath the path to the file
@@ -63,54 +86,65 @@ async function findLastEditTimestamp(
   filePath: string,
   client: GeminiClient,
 ): Promise<number> {
-  const history = await client.getHistory();
-  if (!history) {
-    return -1;
-  }
+  const history = (await client.getHistory()) ?? [];
 
-  // these tools
-  const editTools = [WriteFileTool.Name, EditTool.Name];
-  for (let i = history.length - 1; i >= 0; i--) {
-    const entry = history[i];
+  // Tools that may reference the file path in their FunctionResponse `output`.
+  const toolsInResp = new Set([
+    WriteFileTool.Name,
+    EditTool.Name,
+    ReadManyFilesTool.Name,
+    GrepTool.Name,
+  ]);
+  // Tools that may reference the file path in their FunctionCall `args`.
+  const toolsInCall = new Set([...toolsInResp, ReadFileTool.Name]);
 
-    if (!isFunctionResponse(entry) || !entry.parts) continue;
+  // Iterate backwards to find the most recent relevant action.
+  for (const entry of history.slice().reverse()) {
+    if (!entry.parts) continue;
 
-    // Let's extract the timestamp from the .id value, which is in format
-    // <tool.name>-<timestamp>-<uuid>
     for (const part of entry.parts) {
+      let id: string | undefined;
+      let content: unknown;
+
+      // Check for a relevant FunctionCall with the file path in its arguments.
       if (
-        !part?.functionResponse?.name ||
-        !editTools.includes(part?.functionResponse?.name) ||
-        !part.functionResponse.response
-      )
-        continue;
-
-      // Check if the main setup is correct
-      if (
-        'error' in part.functionResponse.response ||
-        !('output' in part.functionResponse.response)
-      )
-        continue;
-
-      const outval = JSON.stringify(part.functionResponse.response['output']);
-
-      // check the string versions
-      if (!outval || outval.includes('Error') || outval.includes('Failed'))
-        continue;
-
-      if (!outval.includes(filePath)) continue;
-
-      if (part.functionResponse.id) {
-        const idParts = part.functionResponse.id.split('-');
-        if (idParts.length > 2) {
-          const timestamp = parseInt(idParts[1], 10);
-          if (!isNaN(timestamp)) {
-            return timestamp;
-          }
+        isFunctionCall(entry) &&
+        part.functionCall?.name &&
+        toolsInCall.has(part.functionCall.name)
+      ) {
+        id = part.functionCall.id;
+        content = part.functionCall.args;
+      }
+      // Check for a relevant FunctionResponse with the file path in its output.
+      else if (
+        isFunctionResponse(entry) &&
+        part.functionResponse?.name &&
+        toolsInResp.has(part.functionResponse.name)
+      ) {
+        const { response } = part.functionResponse;
+        if (response && !('error' in response) && 'output' in response) {
+          id = part.functionResponse.id;
+          content = response.output;
         }
+      }
+
+      if (!id || content === undefined) continue;
+
+      // Use the "blunt hammer" approach to find the file path in the content.
+      // Note that the tool response data is inconsistent in their formatting
+      // with successes and errors - so, we just check for the existance
+      // as the best guess to if error/failed occured with the response.
+      const stringified = JSON.stringify(content);
+      if (
+        !stringified.includes('Error') && // only applicable for functionResponse
+        !stringified.includes('Failed') && // only applicable for functionResponse
+        stringified.includes(filePath)
+      ) {
+        return getTimestampFromFunctionId(id);
       }
     }
   }
+
   return -1;
 }
 
