@@ -31,7 +31,7 @@ const OUTPUT_UPDATE_INTERVAL_MS = 1000;
 
 export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
   static Name: string = 'run_shell_command';
-  private allowlist: Set<string> = new Set();
+  private whitelist: Set<string> = new Set();
 
   constructor(private readonly config: Config) {
     super(
@@ -237,8 +237,8 @@ Process Group PGID: Process group started or \`(none)\``,
       return false; // skip confirmation, execute call will fail immediately
     }
     const rootCommand = this.getCommandRoot(params.command)!; // must be non-empty string post-validation
-    if (this.allowlist.has(rootCommand)) {
-      return false; // already approved and allowlisted
+    if (this.whitelist.has(rootCommand)) {
+      return false; // already approved and whitelisted
     }
     const confirmationDetails: ToolExecuteConfirmationDetails = {
       type: 'exec',
@@ -247,7 +247,7 @@ Process Group PGID: Process group started or \`(none)\``,
       rootCommand,
       onConfirm: async (outcome: ToolConfirmationOutcome) => {
         if (outcome === ToolConfirmationOutcome.ProceedAlways) {
-          this.allowlist.add(rootCommand);
+          this.whitelist.add(rootCommand);
         }
       },
     };

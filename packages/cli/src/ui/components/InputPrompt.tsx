@@ -116,6 +116,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       const suggestion = completionSuggestions[indexToUse].value;
 
       if (query.trimStart().startsWith('/')) {
+        const parts = query.trimStart().substring(1).split(' ');
+        const commandName = parts[0];
         const slashIndex = query.indexOf('/');
         const base = query.substring(0, slashIndex + 1);
 
@@ -147,10 +149,16 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           buffer.text.length,
           suggestion,
         );
-        resetCompletionState();
       }
+      resetCompletionState();
     },
-    [resetCompletionState, buffer, completionSuggestions],
+    [
+      resetCompletionState,
+      handleSubmitAndClear,
+      buffer,
+      completionSuggestions,
+      slashCommands,
+    ],
   );
 
   const handleInput = useCallback(

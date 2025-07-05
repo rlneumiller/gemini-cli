@@ -375,28 +375,28 @@ By understanding and utilizing these configuration layers and the hierarchical n
 
 ## Sandboxing
 
-The Gemini CLI can execute potentially unsafe operations (like shell commands and file modifications) within a sandboxed environment to protect your system. This is especially important when working with AI-generated code, which may have unforeseen consequences.
+The Gemini CLI can execute potentially unsafe operations (like shell commands and file modifications) within a sandboxed environment to protect your system.
 
-**Sandboxing is disabled by default.** To enable it, you must use one of the configuration methods below.
+Sandboxing is disabled by default, but you can enable it in a few ways:
 
-### How to Enable Sandboxing
+- Using `--sandbox` or `-s` flag.
+- Setting `GEMINI_SANDBOX` environment variable.
+- Sandbox is enabled in `--yolo` mode by default.
 
-You can enable sandboxing in one of three ways, in order of precedence:
+By default, it uses a pre-built `gemini-cli-sandbox` Docker image.
 
-1.  **Command-line Argument:**
+For project-specific sandboxing needs, you can create a custom Dockerfile at `.gemini/sandbox.Dockerfile` in your project's root directory. This Dockerfile can be based on the base sandbox image:
 
-    - Use the `--sandbox <type>` or `-s <type>` flag when running the CLI. This method takes the highest precedence.
-    - Example: `gemini -s docker`
+```dockerfile
+FROM gemini-cli-sandbox
 
-2.  **Settings File:**
+# Add your custom dependencies or configurations here
+# For example:
+# RUN apt-get update && apt-get install -y some-package
+# COPY ./my-config /app/my-config
+```
 
-    - Add the `"sandbox"` property to your `~/.gemini/settings.json` or project-specific `.gemini/settings.json` file.
-    - Example:
-      ```json
-      {
-        "sandbox": "docker"
-      }
-      ```
+When `.gemini/sandbox.Dockerfile` exists, you can use `BUILD_SANDBOX` environment variable when running Gemini CLI to automatically build the custom sandbox image:
 
 ```bash
 BUILD_SANDBOX=1 gemini -s

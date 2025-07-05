@@ -24,5 +24,3 @@
 
 ;; deny all outbound network traffic
 (deny network-outbound)
-;; Allow outbound traffic on OTLP collector port
-(allow network-outbound (remote tcp "localhost:4317"))

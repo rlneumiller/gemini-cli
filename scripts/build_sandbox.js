@@ -54,7 +54,7 @@ try {
 
 if (sandboxCommand === 'sandbox-exec') {
   console.warn(
-    "WARNING: cannot use container-based sandboxing when 'sandbox-exec' (Mac OS seatbelt) is enabled.",
+    'WARNING: container-based sandboxing is disabled (see README.md#sandboxing)',
   );
   process.exit(0);
 }
@@ -110,7 +110,7 @@ chmodSync(
   0o755,
 );
 
-const buildStdout = process.env.VERBOSE ? 'inherit' : 'pipe';
+const buildStdout = process.env.VERBOSE ? 'inherit' : 'ignore';
 
 function buildImage(imageName, dockerfile) {
   console.log(`building ${imageName} ... (can be slow first time)`);

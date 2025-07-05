@@ -45,7 +45,6 @@ This guide provides solutions to common issues and debugging tips.
     2.  Run `npm run build` to compile the project.
 
 - **Error: "Operation not permitted", "Permission denied", or similar.**
-
   - **Cause:** If sandboxing is enabled, then the application is likely attempting an operation restricted by your sandbox, such as writing outside the project directory or system temp directory.
   - **Solution:** See [Sandboxing](./cli/configuration.md#sandboxing) for more information, including how to customize your sandbox configuration.
 

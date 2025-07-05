@@ -66,10 +66,6 @@ export const useAuthCommand = (
     setIsAuthenticating(false);
   }, []);
 
-  const cancelAuthentication = useCallback(() => {
-    setIsAuthenticating(false);
-  }, []);
-
   return {
     isAuthDialogOpen,
     openAuthDialog,
