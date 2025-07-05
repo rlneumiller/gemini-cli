@@ -54,7 +54,7 @@ describe('EditTool', () => {
         .fn()
         .mockReturnValue(mockClientInstanceWithGenerateJson),
       getTargetDir: () => rootDir,
-      getApprovalMode: vi.fn(() => false),
+      getApprovalMode: vi.fn(),
       setApprovalMode: vi.fn(),
       // getGeminiConfig: () => ({ apiKey: 'test-api-key' }), // This was not a real Config method
       // Add other properties/methods of Config if EditTool uses them
@@ -78,7 +78,6 @@ describe('EditTool', () => {
     } as unknown as Config;
 
     // Reset mocks before each test
-    (mockConfig.getApprovalMode as Mock).mockClear();
     (mockConfig.getApprovalMode as Mock).mockClear();
     // Default to not skipping confirmation
     (mockConfig.getApprovalMode as Mock).mockReturnValue(ApprovalMode.DEFAULT);
@@ -335,7 +334,6 @@ describe('EditTool', () => {
       let mockCalled = false;
       mockEnsureCorrectEdit.mockImplementationOnce(
         async (content, p, client) => {
-          console.log('mockEnsureCorrectEdit CALLED IN TEST');
           mockCalled = true;
           expect(content).toBe(originalContent);
           expect(p).toBe(params);
@@ -488,10 +486,10 @@ describe('EditTool', () => {
       // The default mockEnsureCorrectEdit will return 2 occurrences for 'old'
       const result = await tool.execute(params, new AbortController().signal);
       expect(result.llmContent).toMatch(
-        /Expected 1 occurrences but found 2 for old_string in file/,
+        /Expected 1 occurrence but found 2 for old_string in file/,
       );
       expect(result.returnDisplay).toMatch(
-        /Failed to edit, expected 1 occurrence\(s\) but found 2/,
+        /Failed to edit, expected 1 occurrence but found 2/,
       );
     });
 
@@ -534,7 +532,7 @@ describe('EditTool', () => {
         /Expected 3 occurrences but found 2 for old_string in file/,
       );
       expect(result.returnDisplay).toMatch(
-        /Failed to edit, expected 3 occurrence\(s\) but found 2/,
+        /Failed to edit, expected 3 occurrences but found 2/,
       );
     });
 
@@ -552,19 +550,62 @@ describe('EditTool', () => {
       );
     });
 
-    it('should return error if old_string and new_string are identical', async () => {
-      fs.writeFileSync(filePath, 'Some content.', 'utf8');
+    it('should include modification message when proposed content is modified', async () => {
+      const initialContent = 'This is some old text.';
+      fs.writeFileSync(filePath, initialContent, 'utf8');
       const params: EditToolParams = {
         file_path: filePath,
-        old_string: 'Some content.',
-        new_string: 'Some content.',
+        old_string: 'old',
+        new_string: 'new',
+        modified_by_user: true,
       };
-      const result = await tool.execute(params, new AbortController().signal);
-      expect(result.llmContent).toMatch(
-        /The old_string and new_string parameters were effectively identical/,
+
+      (mockConfig.getApprovalMode as Mock).mockReturnValueOnce(
+        ApprovalMode.AUTO_EDIT,
       );
-      expect(result.returnDisplay).toMatch(
-        /The proposed change resulted in no changes to the file./,
+      const result = await tool.execute(params, new AbortController().signal);
+
+      expect(result.llmContent).toMatch(
+        /User modified the `new_string` content/,
+      );
+    });
+
+    it('should not include modification message when proposed content is not modified', async () => {
+      const initialContent = 'This is some old text.';
+      fs.writeFileSync(filePath, initialContent, 'utf8');
+      const params: EditToolParams = {
+        file_path: filePath,
+        old_string: 'old',
+        new_string: 'new',
+        modified_by_user: false,
+      };
+
+      (mockConfig.getApprovalMode as Mock).mockReturnValueOnce(
+        ApprovalMode.AUTO_EDIT,
+      );
+      const result = await tool.execute(params, new AbortController().signal);
+
+      expect(result.llmContent).not.toMatch(
+        /User modified the `new_string` content/,
+      );
+    });
+
+    it('should not include modification message when modified_by_user is not provided', async () => {
+      const initialContent = 'This is some old text.';
+      fs.writeFileSync(filePath, initialContent, 'utf8');
+      const params: EditToolParams = {
+        file_path: filePath,
+        old_string: 'old',
+        new_string: 'new',
+      };
+
+      (mockConfig.getApprovalMode as Mock).mockReturnValueOnce(
+        ApprovalMode.AUTO_EDIT,
+      );
+      const result = await tool.execute(params, new AbortController().signal);
+
+      expect(result.llmContent).not.toMatch(
+        /User modified the `new_string` content/,
       );
     });
   });

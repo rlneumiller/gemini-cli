@@ -9,50 +9,28 @@ import { Box, Text, useInput } from 'ink';
 import { Colors } from '../colors.js';
 import { RadioButtonSelect } from './shared/RadioButtonSelect.js';
 import { LoadedSettings, SettingScope } from '../../config/settings.js';
-import { AuthType } from '@gemini-cli/core';
+import { AuthType } from '@google/gemini-cli-core';
 import { validateAuthMethod } from '../../config/auth.js';
 
 interface AuthDialogProps {
-  onSelect: (authMethod: string | undefined, scope: SettingScope) => void;
-  onHighlight: (authMethod: string | undefined) => void;
+  onSelect: (authMethod: AuthType | undefined, scope: SettingScope) => void;
   settings: LoadedSettings;
   initialErrorMessage?: string | null;
 }
 
 export function AuthDialog({
   onSelect,
-  onHighlight,
   settings,
   initialErrorMessage,
 }: AuthDialogProps): React.JSX.Element {
   const [errorMessage, setErrorMessage] = useState<string | null>(
     initialErrorMessage || null,
   );
-  const allAuthItems = [
-    {
-      label: 'Login with Google',
-      value: AuthType.LOGIN_WITH_GOOGLE_PERSONAL,
-    },
+  const items = [
+    { label: 'Login with Google', value: AuthType.LOGIN_WITH_GOOGLE },
     { label: 'Gemini API Key (AI Studio)', value: AuthType.USE_GEMINI },
-    {
-      label: 'Login with Google Work',
-      value: AuthType.LOGIN_WITH_GOOGLE_ENTERPRISE,
-    },
-    { label: 'Vertex API Key', value: AuthType.USE_VERTEX_AI },
+    { label: 'Vertex AI', value: AuthType.USE_VERTEX_AI },
   ];
-
-  const isSelectedAuthInMore = allAuthItems
-    .slice(2)
-    .some((item) => item.value === settings.merged.selectedAuthType);
-
-  const [showAll, setShowAll] = useState(isSelectedAuthInMore);
-
-  const initialAuthItems = [
-    ...allAuthItems.slice(0, 2),
-    { label: 'More...', value: 'more' },
-  ];
-
-  const items = showAll ? allAuthItems : initialAuthItems;
 
   let initialAuthIndex = items.findIndex(
     (item) => item.value === settings.merged.selectedAuthType,
@@ -62,11 +40,7 @@ export function AuthDialog({
     initialAuthIndex = 0;
   }
 
-  const handleAuthSelect = (authMethod: string) => {
-    if (authMethod === 'more') {
-      setShowAll(true);
-      return;
-    }
+  const handleAuthSelect = (authMethod: AuthType) => {
     const error = validateAuthMethod(authMethod);
     if (error) {
       setErrorMessage(error);
@@ -78,6 +52,13 @@ export function AuthDialog({
 
   useInput((_input, key) => {
     if (key.escape) {
+      if (settings.merged.selectedAuthType === undefined) {
+        // Prevent exiting if no auth method is set
+        setErrorMessage(
+          'You must select an auth method to proceed. Press Ctrl+C twice to exit.',
+        );
+        return;
+      }
       onSelect(undefined, SettingScope.User);
     }
   });
@@ -95,7 +76,6 @@ export function AuthDialog({
         items={items}
         initialIndex={initialAuthIndex}
         onSelect={handleAuthSelect}
-        onHighlight={onHighlight}
         isFocused={true}
       />
       {errorMessage && (
@@ -105,6 +85,16 @@ export function AuthDialog({
       )}
       <Box marginTop={1}>
         <Text color={Colors.Gray}>(Use Enter to select)</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text>Terms of Services and Privacy Notice for Gemini CLI</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text color={Colors.AccentBlue}>
+          {
+            'https://github.com/google-gemini/gemini-cli/blob/main/docs/tos-privacy.md'
+          }
+        </Text>
       </Box>
     </Box>
   );

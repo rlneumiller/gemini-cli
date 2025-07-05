@@ -56,9 +56,12 @@ describe('editor utils', () => {
       win32Command: string;
     }> = [
       { editor: 'vscode', command: 'code', win32Command: 'code.cmd' },
+      { editor: 'vscodium', command: 'codium', win32Command: 'codium.cmd' },
       { editor: 'windsurf', command: 'windsurf', win32Command: 'windsurf' },
       { editor: 'cursor', command: 'cursor', win32Command: 'cursor' },
       { editor: 'vim', command: 'vim', win32Command: 'vim' },
+      { editor: 'neovim', command: 'nvim', win32Command: 'nvim' },
+      { editor: 'zed', command: 'zed', win32Command: 'zed' },
     ];
 
     for (const { editor, command, win32Command } of testCases) {
@@ -105,55 +108,73 @@ describe('editor utils', () => {
   });
 
   describe('getDiffCommand', () => {
-    it('should return the correct command for vscode', () => {
-      const command = getDiffCommand('old.txt', 'new.txt', 'vscode');
-      expect(command).toEqual({
-        command: 'code',
-        args: ['--wait', '--diff', 'old.txt', 'new.txt'],
-      });
-    });
+    const guiEditors: Array<{
+      editor: EditorType;
+      command: string;
+      win32Command: string;
+    }> = [
+      { editor: 'vscode', command: 'code', win32Command: 'code.cmd' },
+      { editor: 'vscodium', command: 'codium', win32Command: 'codium.cmd' },
+      { editor: 'windsurf', command: 'windsurf', win32Command: 'windsurf' },
+      { editor: 'cursor', command: 'cursor', win32Command: 'cursor' },
+      { editor: 'zed', command: 'zed', win32Command: 'zed' },
+    ];
 
-    it('should return the correct command for windsurf', () => {
-      const command = getDiffCommand('old.txt', 'new.txt', 'windsurf');
-      expect(command).toEqual({
-        command: 'windsurf',
-        args: ['--wait', '--diff', 'old.txt', 'new.txt'],
+    for (const { editor, command, win32Command } of guiEditors) {
+      it(`should return the correct command for ${editor} on non-windows`, () => {
+        Object.defineProperty(process, 'platform', { value: 'linux' });
+        const diffCommand = getDiffCommand('old.txt', 'new.txt', editor);
+        expect(diffCommand).toEqual({
+          command,
+          args: ['--wait', '--diff', 'old.txt', 'new.txt'],
+        });
       });
-    });
 
-    it('should return the correct command for cursor', () => {
-      const command = getDiffCommand('old.txt', 'new.txt', 'cursor');
-      expect(command).toEqual({
-        command: 'cursor',
-        args: ['--wait', '--diff', 'old.txt', 'new.txt'],
+      it(`should return the correct command for ${editor} on windows`, () => {
+        Object.defineProperty(process, 'platform', { value: 'win32' });
+        const diffCommand = getDiffCommand('old.txt', 'new.txt', editor);
+        expect(diffCommand).toEqual({
+          command: win32Command,
+          args: ['--wait', '--diff', 'old.txt', 'new.txt'],
+        });
       });
-    });
+    }
 
-    it('should return the correct command for vim', () => {
-      const command = getDiffCommand('old.txt', 'new.txt', 'vim');
-      expect(command).toEqual({
-        command: 'vim',
-        args: [
-          '-d',
-          '-i',
-          'NONE',
-          '-c',
-          'wincmd h | set readonly | wincmd l',
-          '-c',
-          'highlight DiffAdd cterm=bold ctermbg=22 guibg=#005f00 | highlight DiffChange cterm=bold ctermbg=24 guibg=#005f87 | highlight DiffText ctermbg=21 guibg=#0000af | highlight DiffDelete ctermbg=52 guibg=#5f0000',
-          '-c',
-          'set showtabline=2 | set tabline=[Instructions]\\ :wqa(save\\ &\\ quit)\\ \\|\\ i/esc(toggle\\ edit\\ mode)',
-          '-c',
-          'wincmd h | setlocal statusline=OLD\\ FILE',
-          '-c',
-          'wincmd l | setlocal statusline=%#StatusBold#NEW\\ FILE\\ :wqa(save\\ &\\ quit)\\ \\|\\ i/esc(toggle\\ edit\\ mode)',
-          '-c',
-          'autocmd WinClosed * wqa',
-          'old.txt',
-          'new.txt',
-        ],
+    const terminalEditors: Array<{
+      editor: EditorType;
+      command: string;
+    }> = [
+      { editor: 'vim', command: 'vim' },
+      { editor: 'neovim', command: 'nvim' },
+    ];
+
+    for (const { editor, command } of terminalEditors) {
+      it(`should return the correct command for ${editor}`, () => {
+        const diffCommand = getDiffCommand('old.txt', 'new.txt', editor);
+        expect(diffCommand).toEqual({
+          command,
+          args: [
+            '-d',
+            '-i',
+            'NONE',
+            '-c',
+            'wincmd h | set readonly | wincmd l',
+            '-c',
+            'highlight DiffAdd cterm=bold ctermbg=22 guibg=#005f00 | highlight DiffChange cterm=bold ctermbg=24 guibg=#005f87 | highlight DiffText ctermbg=21 guibg=#0000af | highlight DiffDelete ctermbg=52 guibg=#5f0000',
+            '-c',
+            'set showtabline=2 | set tabline=[Instructions]\\ :wqa(save\\ &\\ quit)\\ \\|\\ i/esc(toggle\\ edit\\ mode)',
+            '-c',
+            'wincmd h | setlocal statusline=OLD\\ FILE',
+            '-c',
+            'wincmd l | setlocal statusline=%#StatusBold#NEW\\ FILE\\ :wqa(save\\ &\\ quit)\\ \\|\\ i/esc(toggle\\ edit\\ mode)',
+            '-c',
+            'autocmd WinClosed * wqa',
+            'old.txt',
+            'new.txt',
+          ],
+        });
       });
-    });
+    }
 
     it('should return null for an unsupported editor', () => {
       // @ts-expect-error Testing unsupported editor
@@ -163,55 +184,74 @@ describe('editor utils', () => {
   });
 
   describe('openDiff', () => {
-    it('should call spawn for vscode', async () => {
-      const mockSpawn = {
-        on: vi.fn((event, cb) => {
-          if (event === 'close') {
-            cb(0);
-          }
-        }),
-      };
-      (spawn as Mock).mockReturnValue(mockSpawn);
-      await openDiff('old.txt', 'new.txt', 'vscode');
-      expect(spawn).toHaveBeenCalledWith(
-        'code',
-        ['--wait', '--diff', 'old.txt', 'new.txt'],
-        { stdio: 'inherit' },
-      );
-      expect(mockSpawn.on).toHaveBeenCalledWith('close', expect.any(Function));
-      expect(mockSpawn.on).toHaveBeenCalledWith('error', expect.any(Function));
-    });
+    const spawnEditors: EditorType[] = [
+      'vscode',
+      'vscodium',
+      'windsurf',
+      'cursor',
+      'zed',
+    ];
+    for (const editor of spawnEditors) {
+      it(`should call spawn for ${editor}`, async () => {
+        const mockSpawn = {
+          on: vi.fn((event, cb) => {
+            if (event === 'close') {
+              cb(0);
+            }
+          }),
+        };
+        (spawn as Mock).mockReturnValue(mockSpawn);
+        await openDiff('old.txt', 'new.txt', editor);
+        const diffCommand = getDiffCommand('old.txt', 'new.txt', editor)!;
+        expect(spawn).toHaveBeenCalledWith(
+          diffCommand.command,
+          diffCommand.args,
+          {
+            stdio: 'inherit',
+            shell: true,
+          },
+        );
+        expect(mockSpawn.on).toHaveBeenCalledWith(
+          'close',
+          expect.any(Function),
+        );
+        expect(mockSpawn.on).toHaveBeenCalledWith(
+          'error',
+          expect.any(Function),
+        );
+      });
 
-    it('should reject if spawn for vscode fails', async () => {
-      const mockError = new Error('spawn error');
-      const mockSpawn = {
-        on: vi.fn((event, cb) => {
-          if (event === 'error') {
-            cb(mockError);
-          }
-        }),
-      };
-      (spawn as Mock).mockReturnValue(mockSpawn);
-      await expect(openDiff('old.txt', 'new.txt', 'vscode')).rejects.toThrow(
-        'spawn error',
-      );
-    });
+      it(`should reject if spawn for ${editor} fails`, async () => {
+        const mockError = new Error('spawn error');
+        const mockSpawn = {
+          on: vi.fn((event, cb) => {
+            if (event === 'error') {
+              cb(mockError);
+            }
+          }),
+        };
+        (spawn as Mock).mockReturnValue(mockSpawn);
+        await expect(openDiff('old.txt', 'new.txt', editor)).rejects.toThrow(
+          'spawn error',
+        );
+      });
 
-    it('should reject if vscode exits with non-zero code', async () => {
-      const mockSpawn = {
-        on: vi.fn((event, cb) => {
-          if (event === 'close') {
-            cb(1);
-          }
-        }),
-      };
-      (spawn as Mock).mockReturnValue(mockSpawn);
-      await expect(openDiff('old.txt', 'new.txt', 'vscode')).rejects.toThrow(
-        'VS Code exited with code 1',
-      );
-    });
+      it(`should reject if ${editor} exits with non-zero code`, async () => {
+        const mockSpawn = {
+          on: vi.fn((event, cb) => {
+            if (event === 'close') {
+              cb(1);
+            }
+          }),
+        };
+        (spawn as Mock).mockReturnValue(mockSpawn);
+        await expect(openDiff('old.txt', 'new.txt', editor)).rejects.toThrow(
+          `${editor} exited with code 1`,
+        );
+      });
+    }
 
-    const execSyncEditors: EditorType[] = ['vim', 'windsurf', 'cursor'];
+    const execSyncEditors: EditorType[] = ['vim', 'neovim'];
     for (const editor of execSyncEditors) {
       it(`should call execSync for ${editor} on non-windows`, async () => {
         Object.defineProperty(process, 'platform', { value: 'linux' });
@@ -249,7 +289,7 @@ describe('editor utils', () => {
       // @ts-expect-error Testing unsupported editor
       await openDiff('old.txt', 'new.txt', 'foobar');
       expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'No diff tool available. Install vim or vscode.',
+        'No diff tool available. Install a supported editor.',
       );
     });
   });
@@ -264,7 +304,22 @@ describe('editor utils', () => {
       expect(allowEditorTypeInSandbox('vim')).toBe(true);
     });
 
-    const guiEditors: EditorType[] = ['vscode', 'windsurf', 'cursor'];
+    it('should allow neovim in sandbox mode', () => {
+      process.env.SANDBOX = 'sandbox';
+      expect(allowEditorTypeInSandbox('neovim')).toBe(true);
+    });
+
+    it('should allow neovim when not in sandbox mode', () => {
+      expect(allowEditorTypeInSandbox('neovim')).toBe(true);
+    });
+
+    const guiEditors: EditorType[] = [
+      'vscode',
+      'vscodium',
+      'windsurf',
+      'cursor',
+      'zed',
+    ];
     for (const editor of guiEditors) {
       it(`should not allow ${editor} in sandbox mode`, () => {
         process.env.SANDBOX = 'sandbox';
@@ -312,6 +367,12 @@ describe('editor utils', () => {
       (execSync as Mock).mockReturnValue(Buffer.from('/usr/bin/vim'));
       process.env.SANDBOX = 'sandbox';
       expect(isEditorAvailable('vim')).toBe(true);
+    });
+
+    it('should return true for neovim when installed and in sandbox mode', () => {
+      (execSync as Mock).mockReturnValue(Buffer.from('/usr/bin/nvim'));
+      process.env.SANDBOX = 'sandbox';
+      expect(isEditorAvailable('neovim')).toBe(true);
     });
   });
 });

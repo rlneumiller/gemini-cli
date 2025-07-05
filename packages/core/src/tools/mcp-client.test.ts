@@ -14,12 +14,14 @@ import {
   afterEach,
   Mocked,
 } from 'vitest';
-import { discoverMcpTools } from './mcp-client.js';
+import { discoverMcpTools, sanitizeParameters } from './mcp-client.js';
+import { Schema, Type } from '@google/genai';
 import { Config, MCPServerConfig } from '../config/config.js';
 import { DiscoveredMCPTool } from './mcp-tool.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { parse, ParseEntry } from 'shell-quote';
 
 // Mock dependencies
@@ -62,6 +64,16 @@ vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => {
     return this;
   });
   return { SSEClientTransport: MockedSSETransport };
+});
+
+vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => {
+  const MockedStreamableHTTPTransport = vi.fn().mockImplementation(function (
+    this: any,
+  ) {
+    this.close = vi.fn().mockResolvedValue(undefined); // Add mock close method
+    return this;
+  });
+  return { StreamableHTTPClientTransport: MockedStreamableHTTPTransport };
 });
 
 const mockToolRegistryInstance = {
@@ -125,6 +137,15 @@ describe('discoverMcpTools', () => {
     vi.mocked(SSEClientTransport).mockClear();
     // Ensure the SSEClientTransport mock constructor returns an object with a close method
     vi.mocked(SSEClientTransport).mockImplementation(function (this: any) {
+      this.close = vi.fn().mockResolvedValue(undefined);
+      return this;
+    });
+
+    vi.mocked(StreamableHTTPClientTransport).mockClear();
+    // Ensure the StreamableHTTPClientTransport mock constructor returns an object with a close method
+    vi.mocked(StreamableHTTPClientTransport).mockImplementation(function (
+      this: any,
+    ) {
       this.close = vi.fn().mockResolvedValue(undefined);
       return this;
     });
@@ -268,6 +289,100 @@ describe('discoverMcpTools', () => {
     const registeredTool = mockToolRegistry.registerTool.mock
       .calls[0][0] as DiscoveredMCPTool;
     expect(registeredTool.name).toBe('tool-sse');
+  });
+
+  it('should discover tools via mcpServers config (streamable http)', async () => {
+    const serverConfig: MCPServerConfig = {
+      httpUrl: 'http://localhost:3000/mcp',
+    };
+    mockConfig.getMcpServers.mockReturnValue({ 'http-server': serverConfig });
+
+    const mockTool = {
+      name: 'tool-http',
+      description: 'desc-http',
+      inputSchema: { type: 'object' as const, properties: {} },
+    };
+    vi.mocked(Client.prototype.listTools).mockResolvedValue({
+      tools: [mockTool],
+    });
+
+    mockToolRegistry.getToolsByServer.mockReturnValueOnce([
+      expect.any(DiscoveredMCPTool),
+    ]);
+
+    await discoverMcpTools(
+      mockConfig.getMcpServers() ?? {},
+      mockConfig.getMcpServerCommand(),
+      mockToolRegistry as any,
+    );
+
+    expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
+      new URL(serverConfig.httpUrl!),
+      {},
+    );
+    expect(mockToolRegistry.registerTool).toHaveBeenCalledWith(
+      expect.any(DiscoveredMCPTool),
+    );
+    const registeredTool = mockToolRegistry.registerTool.mock
+      .calls[0][0] as DiscoveredMCPTool;
+    expect(registeredTool.name).toBe('tool-http');
+  });
+
+  describe('StreamableHTTPClientTransport headers', () => {
+    const setupHttpTest = async (headers?: Record<string, string>) => {
+      const serverConfig: MCPServerConfig = {
+        httpUrl: 'http://localhost:3000/mcp',
+        ...(headers && { headers }),
+      };
+      const serverName = headers
+        ? 'http-server-with-headers'
+        : 'http-server-no-headers';
+      const toolName = headers ? 'tool-http-headers' : 'tool-http-no-headers';
+
+      mockConfig.getMcpServers.mockReturnValue({ [serverName]: serverConfig });
+
+      const mockTool = {
+        name: toolName,
+        description: `desc-${toolName}`,
+        inputSchema: { type: 'object' as const, properties: {} },
+      };
+      vi.mocked(Client.prototype.listTools).mockResolvedValue({
+        tools: [mockTool],
+      });
+      mockToolRegistry.getToolsByServer.mockReturnValueOnce([
+        expect.any(DiscoveredMCPTool),
+      ]);
+
+      await discoverMcpTools(
+        mockConfig.getMcpServers() ?? {},
+        mockConfig.getMcpServerCommand(),
+        mockToolRegistry as any,
+      );
+
+      return { serverConfig };
+    };
+
+    it('should pass headers when provided', async () => {
+      const headers = {
+        Authorization: 'Bearer test-token',
+        'X-Custom-Header': 'custom-value',
+      };
+      const { serverConfig } = await setupHttpTest(headers);
+
+      expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
+        new URL(serverConfig.httpUrl!),
+        { requestInit: { headers } },
+      );
+    });
+
+    it('should work without headers (backwards compatibility)', async () => {
+      const { serverConfig } = await setupHttpTest();
+
+      expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
+        new URL(serverConfig.httpUrl!),
+        {},
+      );
+    });
   });
 
   it('should prefix tool names if multiple MCP servers are configured', async () => {
@@ -582,5 +697,89 @@ describe('discoverMcpTools', () => {
     const registeredTool = mockToolRegistry.registerTool.mock
       .calls[0][0] as DiscoveredMCPTool;
     expect(registeredTool.name).toBe('ide-tool');
+  });
+});
+
+describe('sanitizeParameters', () => {
+  it('should do nothing for an undefined schema', () => {
+    const schema = undefined;
+    sanitizeParameters(schema);
+  });
+
+  it('should remove default when anyOf is present', () => {
+    const schema: Schema = {
+      anyOf: [{ type: Type.STRING }, { type: Type.NUMBER }],
+      default: 'hello',
+    };
+    sanitizeParameters(schema);
+    expect(schema.default).toBeUndefined();
+  });
+
+  it('should recursively sanitize items in anyOf', () => {
+    const schema: Schema = {
+      anyOf: [
+        {
+          anyOf: [{ type: Type.STRING }],
+          default: 'world',
+        },
+        { type: Type.NUMBER },
+      ],
+    };
+    sanitizeParameters(schema);
+    expect(schema.anyOf![0].default).toBeUndefined();
+  });
+
+  it('should recursively sanitize items in items', () => {
+    const schema: Schema = {
+      items: {
+        anyOf: [{ type: Type.STRING }],
+        default: 'world',
+      },
+    };
+    sanitizeParameters(schema);
+    expect(schema.items!.default).toBeUndefined();
+  });
+
+  it('should recursively sanitize items in properties', () => {
+    const schema: Schema = {
+      properties: {
+        prop1: {
+          anyOf: [{ type: Type.STRING }],
+          default: 'world',
+        },
+      },
+    };
+    sanitizeParameters(schema);
+    expect(schema.properties!.prop1.default).toBeUndefined();
+  });
+
+  it('should handle complex nested schemas', () => {
+    const schema: Schema = {
+      properties: {
+        prop1: {
+          items: {
+            anyOf: [{ type: Type.STRING }],
+            default: 'world',
+          },
+        },
+        prop2: {
+          anyOf: [
+            {
+              properties: {
+                nestedProp: {
+                  anyOf: [{ type: Type.NUMBER }],
+                  default: 123,
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+    sanitizeParameters(schema);
+    expect(schema.properties!.prop1.items!.default).toBeUndefined();
+    const nestedProp =
+      schema.properties!.prop2.anyOf![0].properties!.nestedProp;
+    expect(nestedProp?.default).toBeUndefined();
   });
 });

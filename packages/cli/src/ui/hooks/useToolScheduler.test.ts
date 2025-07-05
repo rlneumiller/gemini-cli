@@ -24,7 +24,7 @@ import {
   ToolCall, // Import from core
   Status as ToolCallStatusType,
   ApprovalMode, // Import from core
-} from '@gemini-cli/core';
+} from '@google/gemini-cli-core';
 import {
   HistoryItemWithoutId,
   ToolCallStatus,
@@ -32,8 +32,8 @@ import {
 } from '../types.js';
 
 // Mocks
-vi.mock('@gemini-cli/core', async () => {
-  const actual = await vi.importActual('@gemini-cli/core');
+vi.mock('@google/gemini-cli-core', async () => {
+  const actual = await vi.importActual('@google/gemini-cli-core');
   return {
     ...actual,
     ToolRegistry: vi.fn(),
@@ -48,6 +48,8 @@ const mockToolRegistry = {
 const mockConfig = {
   getToolRegistry: vi.fn(() => mockToolRegistry as unknown as ToolRegistry),
   getApprovalMode: vi.fn(() => ApprovalMode.DEFAULT),
+  getUsageStatisticsEnabled: () => true,
+  getDebugMode: () => false,
 };
 
 const mockTool: Tool = {
@@ -558,8 +560,8 @@ describe('useReactToolScheduler', () => {
 
     (mockToolWithLiveOutput.execute as Mock).mockImplementation(
       async (
-        _args: any,
-        _signal: any,
+        _args: Record<string, unknown>,
+        _signal: AbortSignal,
         updateFn: ((output: string) => void) | undefined,
       ) => {
         liveUpdateFn = updateFn;

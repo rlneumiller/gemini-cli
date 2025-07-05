@@ -6,15 +6,13 @@
 
 /// <reference types="vitest/globals" />
 
-const MOCK_HOME_DIR = '/mock/home/user'; // MUST BE FIRST
-
-// Mock 'os' first. Its factory uses MOCK_HOME_DIR.
+// Mock 'os' first.
 import * as osActual from 'os'; // Import for type info for the mock factory
 vi.mock('os', async (importOriginal) => {
   const actualOs = await importOriginal<typeof osActual>();
   return {
     ...actualOs,
-    homedir: vi.fn(() => MOCK_HOME_DIR),
+    homedir: vi.fn(() => '/mock/home/user'),
   };
 });
 
@@ -45,7 +43,6 @@ import stripJsonComments from 'strip-json-comments'; // Will be mocked separatel
 
 // These imports will get the versions from the vi.mock('./settings.js', ...) factory.
 import {
-  LoadedSettings,
   loadSettings,
   USER_SETTINGS_PATH, // This IS the mocked path.
   SETTINGS_DIRECTORY_NAME, // This is from the original module, but used by the mock.
@@ -77,7 +74,7 @@ describe('Settings Loading and Merging', () => {
     mockFsMkdirSync = vi.mocked(fs.mkdirSync);
     mockStripJsonComments = vi.mocked(stripJsonComments);
 
-    vi.mocked(osActual.homedir).mockReturnValue(MOCK_HOME_DIR);
+    vi.mocked(osActual.homedir).mockReturnValue('/mock/home/user');
     (mockStripJsonComments as unknown as Mock).mockImplementation(
       (jsonString: string) => jsonString,
     );
@@ -597,7 +594,7 @@ describe('Settings Loading and Merging', () => {
   describe('LoadedSettings class', () => {
     it('setValue should update the correct scope and recompute merged settings', () => {
       (mockFsExistsSync as Mock).mockReturnValue(false);
-      const loadedSettings = loadSettings(MOCK_WORKSPACE_DIR) as LoadedSettings;
+      const loadedSettings = loadSettings(MOCK_WORKSPACE_DIR);
 
       vi.mocked(fs.writeFileSync).mockImplementation(() => {});
       // mkdirSync is mocked in beforeEach to return undefined, which is fine for void usage

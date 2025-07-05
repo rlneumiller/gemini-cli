@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import type { Mocked } from 'vitest';
 import { handleAtCommand } from './atCommandProcessor.js';
-import { Config, FileDiscoveryService } from '@gemini-cli/core';
+import { Config, FileDiscoveryService } from '@google/gemini-cli-core';
 import { ToolCallStatus } from '../types.js';
 import { UseHistoryManagerReturn } from './useHistoryManager.js';
 import * as fsPromises from 'fs/promises';
@@ -21,6 +21,7 @@ const mockConfig = {
   isSandboxed: vi.fn(() => false),
   getFileService: vi.fn(),
   getFileFilteringRespectGitIgnore: vi.fn(() => true),
+  getEnableRecursiveFileSearch: vi.fn(() => true),
 } as unknown as Config;
 
 const mockReadManyFilesExecute = vi.fn();
@@ -51,8 +52,8 @@ vi.mock('fs/promises', async () => {
   };
 });
 
-vi.mock('@gemini-cli/core', async () => {
-  const actual = await vi.importActual('@gemini-cli/core');
+vi.mock('@google/gemini-cli-core', async () => {
+  const actual = await vi.importActual('@google/gemini-cli-core');
   return {
     ...actual,
     FileDiscoveryService: vi.fn(),
@@ -716,6 +717,37 @@ describe('handleAtCommand', () => {
         `Path ${gitFile} is git-ignored and will be skipped.`,
       );
       expect(mockReadManyFilesExecute).not.toHaveBeenCalled();
+      expect(result.processedQuery).toEqual([{ text: query }]);
+      expect(result.shouldProceed).toBe(true);
+    });
+  });
+
+  describe('when recursive file search is disabled', () => {
+    beforeEach(() => {
+      vi.mocked(mockConfig.getEnableRecursiveFileSearch).mockReturnValue(false);
+    });
+
+    it('should not use glob search for a nonexistent file', async () => {
+      const invalidFile = 'nonexistent.txt';
+      const query = `@${invalidFile}`;
+
+      vi.mocked(fsPromises.stat).mockRejectedValue(
+        Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+      );
+
+      const result = await handleAtCommand({
+        query,
+        config: mockConfig,
+        addItem: mockAddItem,
+        onDebugMessage: mockOnDebugMessage,
+        messageId: 300,
+        signal: abortController.signal,
+      });
+
+      expect(mockGlobExecute).not.toHaveBeenCalled();
+      expect(mockOnDebugMessage).toHaveBeenCalledWith(
+        `Glob tool not found. Path ${invalidFile} will be skipped.`,
+      );
       expect(result.processedQuery).toEqual([{ text: query }]);
       expect(result.shouldProceed).toBe(true);
     });

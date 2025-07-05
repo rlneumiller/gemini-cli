@@ -21,7 +21,7 @@ import {
   ToolCall,
   Status as CoreStatus,
   EditorType,
-} from '@gemini-cli/core';
+} from '@google/gemini-cli-core';
 import { useCallback, useState, useMemo } from 'react';
 import {
   HistoryItemToolGroup,
@@ -128,7 +128,7 @@ export function useReactToolScheduler(
         }),
       );
     },
-    [],
+    [setToolCallsForDisplay],
   );
 
   const scheduler = useMemo(
@@ -152,7 +152,7 @@ export function useReactToolScheduler(
   );
 
   const schedule: ScheduleFn = useCallback(
-    async (
+    (
       request: ToolCallRequestInfo | ToolCallRequestInfo[],
       signal: AbortSignal,
     ) => {

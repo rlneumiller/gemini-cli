@@ -8,7 +8,7 @@ import {
   allowEditorTypeInSandbox,
   checkHasEditorType,
   type EditorType,
-} from '@gemini-cli/core';
+} from '@google/gemini-cli-core';
 
 export interface EditorDisplay {
   name: string;
@@ -17,17 +17,28 @@ export interface EditorDisplay {
 }
 
 export const EDITOR_DISPLAY_NAMES: Record<EditorType, string> = {
+  zed: 'Zed',
   vscode: 'VS Code',
+  vscodium: 'VSCodium',
   windsurf: 'Windsurf',
   cursor: 'Cursor',
   vim: 'Vim',
+  neovim: 'Neovim',
 };
 
 class EditorSettingsManager {
   private readonly availableEditors: EditorDisplay[];
 
   constructor() {
-    const editorTypes: EditorType[] = ['vscode', 'windsurf', 'cursor', 'vim'];
+    const editorTypes: EditorType[] = [
+      'zed',
+      'vscode',
+      'vscodium',
+      'windsurf',
+      'cursor',
+      'vim',
+      'neovim',
+    ];
     this.availableEditors = [
       {
         name: 'None',

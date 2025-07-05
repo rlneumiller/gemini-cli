@@ -7,7 +7,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { Colors } from '../colors.js';
-import { shortenPath, tildeifyPath, tokenLimit } from '@gemini-cli/core';
+import { shortenPath, tildeifyPath, tokenLimit } from '@google/gemini-cli-core';
 import { ConsoleSummaryDisplay } from './ConsoleSummaryDisplay.js';
 import process from 'node:process';
 import { MemoryUsageDisplay } from './MemoryUsageDisplay.js';
@@ -23,8 +23,6 @@ interface FooterProps {
   showErrorDetails: boolean;
   showMemoryUsage?: boolean;
   promptTokenCount: number;
-  candidatesTokenCount: number;
-  totalTokenCount: number;
 }
 
 export const Footer: React.FC<FooterProps> = ({
@@ -37,10 +35,10 @@ export const Footer: React.FC<FooterProps> = ({
   errorCount,
   showErrorDetails,
   showMemoryUsage,
-  totalTokenCount,
+  promptTokenCount,
 }) => {
   const limit = tokenLimit(model);
-  const percentage = totalTokenCount / limit;
+  const percentage = promptTokenCount / limit;
 
   return (
     <Box marginTop={1} justifyContent="space-between" width="100%">
@@ -74,7 +72,7 @@ export const Footer: React.FC<FooterProps> = ({
           </Text>
         ) : (
           <Text color={Colors.AccentRed}>
-            no sandbox <Text color={Colors.Gray}>(see docs)</Text>
+            no sandbox <Text color={Colors.Gray}>(see /docs)</Text>
           </Text>
         )}
       </Box>

@@ -16,6 +16,7 @@ import {
   EditorType,
   Config,
   logToolCall,
+  ToolCallEvent,
 } from '../index.js';
 import { Part, PartListUnion } from '@google/genai';
 import { getResponseTextFromParts } from '../utils/generateContentResponseUtilities.js';
@@ -281,21 +282,9 @@ export class CoreToolScheduler {
 
       // currentCall is a non-terminal state here and should have startTime and tool.
       const existingStartTime = currentCall.startTime;
-      const toolInstance = (
-        currentCall as
-          | ValidatingToolCall
-          | ScheduledToolCall
-          | ExecutingToolCall
-          | WaitingToolCall
-      ).tool;
+      const toolInstance = currentCall.tool;
 
-      const outcome = (
-        currentCall as
-          | ValidatingToolCall
-          | ScheduledToolCall
-          | ExecutingToolCall
-          | WaitingToolCall
-      ).outcome;
+      const outcome = currentCall.outcome;
 
       switch (newStatus) {
         case 'success': {
@@ -578,7 +567,7 @@ export class CoreToolScheduler {
       callsToExecute.forEach((toolCall) => {
         if (toolCall.status !== 'scheduled') return;
 
-        const scheduledCall = toolCall as ScheduledToolCall;
+        const scheduledCall = toolCall;
         const { callId, name: toolName } = scheduledCall.request;
         this.setStatusInternal(callId, 'executing');
 
@@ -590,7 +579,7 @@ export class CoreToolScheduler {
                 }
                 this.toolCalls = this.toolCalls.map((tc) =>
                   tc.request.callId === callId && tc.status === 'executing'
-                    ? { ...(tc as ExecutingToolCall), liveOutput: outputChunk }
+                    ? { ...tc, liveOutput: outputChunk }
                     : tc,
                 );
                 this.notifyToolCallsUpdate();
@@ -652,20 +641,7 @@ export class CoreToolScheduler {
       this.toolCalls = [];
 
       for (const call of completedCalls) {
-        logToolCall(
-          this.config,
-          {
-            function_name: call.request.name,
-            function_args: call.request.args,
-            duration_ms: call.durationMs ?? 0,
-            success: call.status === 'success',
-            error:
-              call.status === 'error'
-                ? call.response.error?.message
-                : undefined,
-          },
-          call.outcome,
-        );
+        logToolCall(this.config, new ToolCallEvent(call));
       }
 
       if (this.onAllToolCallsComplete) {

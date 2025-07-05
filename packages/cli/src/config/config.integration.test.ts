@@ -12,7 +12,7 @@ import {
   Config,
   ConfigParameters,
   ContentGeneratorConfig,
-} from '@gemini-cli/core';
+} from '@google/gemini-cli-core';
 
 const TEST_CONTENT_GENERATOR_CONFIG: ContentGeneratorConfig = {
   apiKey: 'test-key',
@@ -21,8 +21,8 @@ const TEST_CONTENT_GENERATOR_CONFIG: ContentGeneratorConfig = {
 };
 
 // Mock file discovery service and tool registry
-vi.mock('@gemini-cli/core', async () => {
-  const actual = await vi.importActual('@gemini-cli/core');
+vi.mock('@google/gemini-cli-core', async () => {
+  const actual = await vi.importActual('@google/gemini-cli-core');
   return {
     ...actual,
     FileDiscoveryService: vi.fn().mockImplementation(() => ({
@@ -208,6 +208,36 @@ describe('Configuration Integration Tests', () => {
       const config = new Config(configParams);
 
       expect(config.getCheckpointingEnabled()).toBe(true);
+    });
+  });
+
+  describe('Extension Context Files', () => {
+    it('should have an empty array for extension context files by default', () => {
+      const configParams: ConfigParameters = {
+        cwd: '/tmp',
+        contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
+        embeddingModel: 'test-embedding-model',
+        sandbox: false,
+        targetDir: tempDir,
+        debugMode: false,
+      };
+      const config = new Config(configParams);
+      expect(config.getExtensionContextFilePaths()).toEqual([]);
+    });
+
+    it('should correctly store and return extension context file paths', () => {
+      const contextFiles = ['/path/to/file1.txt', '/path/to/file2.js'];
+      const configParams: ConfigParameters = {
+        cwd: '/tmp',
+        contentGeneratorConfig: TEST_CONTENT_GENERATOR_CONFIG,
+        embeddingModel: 'test-embedding-model',
+        sandbox: false,
+        targetDir: tempDir,
+        debugMode: false,
+        extensionContextFilePaths: contextFiles,
+      };
+      const config = new Config(configParams);
+      expect(config.getExtensionContextFilePaths()).toEqual(contextFiles);
     });
   });
 });

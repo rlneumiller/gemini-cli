@@ -21,10 +21,13 @@ import { ShellTool } from '../tools/shell.js';
 import { WriteFileTool } from '../tools/write-file.js';
 import { WebFetchTool } from '../tools/web-fetch.js';
 import { ReadManyFilesTool } from '../tools/read-many-files.js';
-import { MemoryTool, setGeminiMdFilename } from '../tools/memoryTool.js';
+import {
+  MemoryTool,
+  setGeminiMdFilename,
+  GEMINI_CONFIG_DIR as GEMINI_DIR,
+} from '../tools/memoryTool.js';
 import { WebSearchTool } from '../tools/web-search.js';
 import { GeminiClient } from '../core/client.js';
-import { GEMINI_CONFIG_DIR as GEMINI_DIR } from '../tools/memoryTool.js';
 import { FileDiscoveryService } from '../services/fileDiscoveryService.js';
 import { GitService } from '../services/gitService.js';
 import { getProjectTempDir } from '../utils/paths.js';
@@ -33,8 +36,13 @@ import {
   DEFAULT_TELEMETRY_TARGET,
   DEFAULT_OTLP_ENDPOINT,
   TelemetryTarget,
+  StartSessionEvent,
 } from '../telemetry/index.js';
-import { DEFAULT_GEMINI_EMBEDDING_MODEL } from './models.js';
+import {
+  DEFAULT_GEMINI_EMBEDDING_MODEL,
+  DEFAULT_GEMINI_FLASH_MODEL,
+} from './models.js';
+import { ClearcutLogger } from '../telemetry/clearcut-logger/clearcut-logger.js';
 
 export enum ApprovalMode {
   DEFAULT = 'default',
@@ -68,6 +76,7 @@ export class MCPServerConfig {
     readonly url?: string,
     // For streamable http transport
     readonly httpUrl?: string,
+    readonly headers?: Record<string, string>,
     // For websocket transport
     readonly tcp?: string,
     // Common
@@ -78,19 +87,15 @@ export class MCPServerConfig {
   ) {}
 }
 
-export const SUPPORTED_SANDBOX_COMMANDS = [
-  'docker',
-  'podman',
-  'sandbox-exec',
-] as const;
-
-export type SupportedSandboxCommand =
-  (typeof SUPPORTED_SANDBOX_COMMANDS)[number];
-
 export interface SandboxConfig {
-  command: SupportedSandboxCommand;
+  command: 'docker' | 'podman' | 'sandbox-exec';
   image: string;
 }
+
+export type FlashFallbackHandler = (
+  currentModel: string,
+  fallbackModel: string,
+) => Promise<boolean>;
 
 export interface ConfigParameters {
   sessionId: string;
@@ -113,6 +118,7 @@ export interface ConfigParameters {
   contextFileName?: string | string[];
   accessibility?: AccessibilitySettings;
   telemetry?: TelemetrySettings;
+  usageStatisticsEnabled?: boolean;
   fileFiltering?: {
     respectGitIgnore?: boolean;
     enableRecursiveFileSearch?: boolean;
@@ -123,6 +129,7 @@ export interface ConfigParameters {
   fileDiscoveryService?: FileDiscoveryService;
   bugCommand?: BugCommandSettings;
   model: string;
+  extensionContextFilePaths?: string[];
   ideMode?: boolean;
 }
 
@@ -148,6 +155,7 @@ export class Config {
   private readonly showMemoryUsage: boolean;
   private readonly accessibility: AccessibilitySettings;
   private readonly telemetrySettings: TelemetrySettings;
+  private readonly usageStatisticsEnabled: boolean;
   private geminiClient!: GeminiClient;
   private readonly fileFiltering: {
     respectGitIgnore: boolean;
@@ -160,7 +168,10 @@ export class Config {
   private readonly cwd: string;
   private readonly bugCommand: BugCommandSettings | undefined;
   private readonly model: string;
+  private readonly extensionContextFilePaths: string[];
   private readonly ideMode: boolean;
+  private modelSwitchedDuringSession: boolean = false;
+  flashFallbackHandler?: FlashFallbackHandler;
 
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId;
@@ -188,6 +199,7 @@ export class Config {
       otlpEndpoint: params.telemetry?.otlpEndpoint ?? DEFAULT_OTLP_ENDPOINT,
       logPrompts: params.telemetry?.logPrompts ?? true,
     };
+    this.usageStatisticsEnabled = params.usageStatisticsEnabled ?? true;
 
     this.fileFiltering = {
       respectGitIgnore: params.fileFiltering?.respectGitIgnore ?? true,
@@ -200,6 +212,7 @@ export class Config {
     this.fileDiscoveryService = params.fileDiscoveryService ?? null;
     this.bugCommand = params.bugCommand;
     this.model = params.model;
+    this.extensionContextFilePaths = params.extensionContextFilePaths ?? [];
     this.ideMode = params.ideMode ?? false;
 
     if (params.contextFileName) {
@@ -209,12 +222,30 @@ export class Config {
     if (this.telemetrySettings.enabled) {
       initializeTelemetry(this);
     }
+
+    if (this.getUsageStatisticsEnabled()) {
+      ClearcutLogger.getInstance(this)?.logStartSessionEvent(
+        new StartSessionEvent(this),
+      );
+    } else {
+      console.log('Data collection is disabled.');
+    }
   }
 
   async refreshAuth(authMethod: AuthType) {
+    // Always use the original default model when switching auth methods
+    // This ensures users don't stay on Flash after switching between auth types
+    // and allows API key users to get proper fallback behavior from getEffectiveModel
+    const modelToUse = this.model; // Use the original default model
+
+    // Temporarily clear contentGeneratorConfig to prevent getModel() from returning
+    // the previous session's model (which might be Flash)
+    this.contentGeneratorConfig = undefined!;
+
     const contentConfig = await createContentGeneratorConfig(
-      this.getModel(),
+      modelToUse,
       authMethod,
+      this,
     );
 
     const gc = new GeminiClient(this);
@@ -222,6 +253,11 @@ export class Config {
     this.toolRegistry = await createToolRegistry(this);
     await gc.initialize(contentConfig);
     this.contentGeneratorConfig = contentConfig;
+
+    // Reset the session flag since we're explicitly changing auth and using default model
+    this.modelSwitchedDuringSession = false;
+
+    // Note: In the future, we may want to reset any cached state when switching auth methods
   }
 
   getSessionId(): string {
@@ -234,6 +270,28 @@ export class Config {
 
   getModel(): string {
     return this.contentGeneratorConfig?.model || this.model;
+  }
+
+  setModel(newModel: string): void {
+    if (this.contentGeneratorConfig) {
+      this.contentGeneratorConfig.model = newModel;
+      this.modelSwitchedDuringSession = true;
+    }
+  }
+
+  isModelSwitchedDuringSession(): boolean {
+    return this.modelSwitchedDuringSession;
+  }
+
+  resetModelToDefault(): void {
+    if (this.contentGeneratorConfig) {
+      this.contentGeneratorConfig.model = this.model; // Reset to the original default model
+      this.modelSwitchedDuringSession = false;
+    }
+  }
+
+  setFlashFallbackHandler(handler: FlashFallbackHandler): void {
+    this.flashFallbackHandler = handler;
   }
 
   getEmbeddingModel(): string {
@@ -382,6 +440,14 @@ export class Config {
     return this.fileDiscoveryService;
   }
 
+  getUsageStatisticsEnabled(): boolean {
+    return this.usageStatisticsEnabled;
+  }
+
+  getExtensionContextFilePaths(): string[] {
+    return this.extensionContextFilePaths;
+  }
+
   async getGitService(): Promise<GitService> {
     if (!this.gitService) {
       this.gitService = new GitService(this.targetDir);
@@ -398,25 +464,33 @@ export class Config {
 export function createToolRegistry(config: Config): Promise<ToolRegistry> {
   const registry = new ToolRegistry(config);
   const targetDir = config.getTargetDir();
-  const tools = config.getCoreTools()
-    ? new Set(config.getCoreTools())
-    : undefined;
-  const excludeTools = config.getExcludeTools()
-    ? new Set(config.getExcludeTools())
-    : undefined;
 
   // helper to create & register core tools that are enabled
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const registerCoreTool = (ToolClass: any, ...args: unknown[]) => {
-    // check both the tool name (.Name) and the class name (.name)
-    if (
-      // coreTools contain tool name
-      (!tools || tools.has(ToolClass.Name) || tools.has(ToolClass.name)) &&
-      // excludeTools don't contain tool name
-      (!excludeTools ||
-        (!excludeTools.has(ToolClass.Name) &&
-          !excludeTools.has(ToolClass.name)))
-    ) {
+    const className = ToolClass.name;
+    const toolName = ToolClass.Name || className;
+    const coreTools = config.getCoreTools();
+    const excludeTools = config.getExcludeTools();
+
+    let isEnabled = false;
+    if (coreTools === undefined) {
+      isEnabled = true;
+    } else {
+      isEnabled = coreTools.some(
+        (tool) =>
+          tool === className ||
+          tool === toolName ||
+          tool.startsWith(`${className}(`) ||
+          tool.startsWith(`${toolName}(`),
+      );
+    }
+
+    if (excludeTools?.includes(className) || excludeTools?.includes(toolName)) {
+      isEnabled = false;
+    }
+
+    if (isEnabled) {
       registry.registerTool(new ToolClass(...args));
     }
   };
@@ -437,3 +511,6 @@ export function createToolRegistry(config: Config): Promise<ToolRegistry> {
     return registry;
   })();
 }
+
+// Export model constants for use in CLI
+export { DEFAULT_GEMINI_FLASH_MODEL };

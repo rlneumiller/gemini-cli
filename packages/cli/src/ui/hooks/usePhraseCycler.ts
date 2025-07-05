@@ -8,7 +8,15 @@ import { useState, useEffect, useRef } from 'react';
 
 export const WITTY_LOADING_PHRASES = [
   "I'm Feeling Lucky",
-  "Don't panic...",
+  'Shipping awesomeness... ',
+  'Painting the serifs back on...',
+  'Navigating the slime mold...',
+  'Consulting the digital spirits...',
+  'Reticulating splines...',
+  'Warming up the AI hamsters...',
+  'Asking the magic conch shell...',
+  'Generating witty retort...',
+  'Polishing the algorithms...',
   "Don't rush perfection (or my code)...",
   "Greasin' the cogs of the machine...",
   "Hold tight, I'm crafting a masterpiece...",

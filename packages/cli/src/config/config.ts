@@ -18,7 +18,7 @@ import {
   DEFAULT_GEMINI_EMBEDDING_MODEL,
   FileDiscoveryService,
   TelemetryTarget,
-} from '@gemini-cli/core';
+} from '@google/gemini-cli-core';
 import { Settings } from './settings.js';
 
 import { Extension } from './extension.js';
@@ -27,13 +27,7 @@ import * as dotenv from 'dotenv';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import {
-  loadSandboxConfig,
-  SANDBOX_OPTIONS,
-  SANDBOX_LEGACY_OPTIONS,
-  SandboxOption,
-  SandboxLegacyOption,
-} from './sandboxConfig.js';
+import { loadSandboxConfig } from './sandboxConfig.js';
 
 // Simple console logger for now - replace with actual logger if available
 const logger = {
@@ -47,8 +41,8 @@ const logger = {
 
 interface CliArgs {
   model: string | undefined;
-  sandbox?: Exclude<SandboxOption, SandboxLegacyOption>;
-  'sandbox-image'?: string;
+  sandbox: boolean | string | undefined;
+  'sandbox-image': string | undefined;
   debug: boolean | undefined;
   prompt: string | undefined;
   all_files: boolean | undefined;
@@ -77,13 +71,8 @@ async function parseArguments(): Promise<CliArgs> {
     })
     .option('sandbox', {
       alias: 's',
-      type: 'string',
-      choices: SANDBOX_OPTIONS.filter(
-        (o): o is Exclude<SandboxOption, SandboxLegacyOption> =>
-          !SANDBOX_LEGACY_OPTIONS.find((lo) => lo === o),
-      ),
-      description:
-        "Set the sandboxing command for tool execution. Use 'auto' to autodetect a supported platform, or specify one directly (e.g., 'docker', 'podman').",
+      type: 'boolean',
+      description: 'Run in sandbox?',
     })
     .option('sandbox-image', {
       type: 'string',
@@ -139,10 +128,6 @@ async function parseArguments(): Promise<CliArgs> {
       type: 'boolean',
       description: 'Enables checkpointing of file edits',
       default: false,
-    })
-    .option('ide-mode', {
-      type: 'boolean',
-      description: 'Run in IDE mode',
     })
     .version(await getCliVersion()) // This will enable the --version flag based on package.json
     .alias('v', 'version')
@@ -212,12 +197,7 @@ export async function loadCliConfig(
   const mcpServers = mergeMcpServers(settings, extensions);
   const excludeTools = mergeExcludeTools(settings, extensions);
 
-  const sandboxConfig = await loadSandboxConfig(settings, argv).catch(
-    (e: Error) => {
-      console.error(e.message);
-      process.exit(1);
-    },
-  );
+  const sandboxConfig = await loadSandboxConfig(settings, argv);
 
   return new Config({
     sessionId,
@@ -249,6 +229,7 @@ export async function loadCliConfig(
         settings.telemetry?.otlpEndpoint,
       logPrompts: argv.telemetryLogPrompts ?? settings.telemetry?.logPrompts,
     },
+    usageStatisticsEnabled: settings.usageStatisticsEnabled ?? true,
     // Git-aware file filtering settings
     fileFiltering: {
       respectGitIgnore: settings.fileFiltering?.respectGitIgnore,
@@ -265,6 +246,7 @@ export async function loadCliConfig(
     fileDiscoveryService: fileService,
     bugCommand: settings.bugCommand,
     model: argv.model!,
+    extensionContextFilePaths,
     ideMode: argv.ideMode || settings.ideMode || false,
   });
 }
@@ -332,6 +314,6 @@ function findEnvFile(startDir: string): string | null {
 export function loadEnvironment(): void {
   const envFilePath = findEnvFile(process.cwd());
   if (envFilePath) {
-    dotenv.config({ path: envFilePath });
+    dotenv.config({ path: envFilePath, quiet: true });
   }
 }

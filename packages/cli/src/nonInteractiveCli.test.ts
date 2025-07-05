@@ -7,15 +7,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runNonInteractive } from './nonInteractiveCli.js';
-import { Config, GeminiClient, ToolRegistry } from '@gemini-cli/core';
+import { Config, GeminiClient, ToolRegistry } from '@google/gemini-cli-core';
 import { GenerateContentResponse, Part, FunctionCall } from '@google/genai';
 
 // Mock dependencies
-vi.mock('@gemini-cli/core', async () => {
-  const actualCore =
-    await vi.importActual<typeof import('@gemini-cli/core')>(
-      '@gemini-cli/core',
-    );
+vi.mock('@google/gemini-cli-core', async () => {
+  const actualCore = await vi.importActual<
+    typeof import('@google/gemini-cli-core')
+  >('@google/gemini-cli-core');
   return {
     ...actualCore,
     GeminiClient: vi.fn(),
@@ -53,6 +52,7 @@ describe('runNonInteractive', () => {
     mockConfig = {
       getToolRegistry: vi.fn().mockReturnValue(mockToolRegistry),
       getGeminiClient: vi.fn().mockReturnValue(mockGeminiClient),
+      getContentGeneratorConfig: vi.fn().mockReturnValue({}),
     } as unknown as Config;
 
     mockProcessStdoutWrite = vi.fn().mockImplementation(() => true);
@@ -109,7 +109,7 @@ describe('runNonInteractive', () => {
     };
 
     const { executeToolCall: mockCoreExecuteToolCall } = await import(
-      '@gemini-cli/core'
+      '@google/gemini-cli-core'
     );
     vi.mocked(mockCoreExecuteToolCall).mockResolvedValue({
       callId: 'fc1',
@@ -162,7 +162,7 @@ describe('runNonInteractive', () => {
     };
 
     const { executeToolCall: mockCoreExecuteToolCall } = await import(
-      '@gemini-cli/core'
+      '@google/gemini-cli-core'
     );
     vi.mocked(mockCoreExecuteToolCall).mockResolvedValue({
       callId: 'fcError',
@@ -215,8 +215,72 @@ describe('runNonInteractive', () => {
     await runNonInteractive(mockConfig, 'Initial fail');
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      'Error processing input:',
-      apiError,
+      '[API Error: API connection failed]',
+    );
+  });
+
+  it('should not exit if a tool is not found, and should send error back to model', async () => {
+    const functionCall: FunctionCall = {
+      id: 'fcNotFound',
+      name: 'nonExistentTool',
+      args: {},
+    };
+    const errorResponsePart: Part = {
+      functionResponse: {
+        name: 'nonExistentTool',
+        id: 'fcNotFound',
+        response: { error: 'Tool "nonExistentTool" not found in registry.' },
+      },
+    };
+
+    const { executeToolCall: mockCoreExecuteToolCall } = await import(
+      '@google/gemini-cli-core'
+    );
+    vi.mocked(mockCoreExecuteToolCall).mockResolvedValue({
+      callId: 'fcNotFound',
+      responseParts: [errorResponsePart],
+      resultDisplay: 'Tool "nonExistentTool" not found in registry.',
+      error: new Error('Tool "nonExistentTool" not found in registry.'),
+    });
+
+    const stream1 = (async function* () {
+      yield { functionCalls: [functionCall] } as GenerateContentResponse;
+    })();
+    const stream2 = (async function* () {
+      yield {
+        candidates: [
+          {
+            content: {
+              parts: [{ text: 'Unfortunately the tool does not exist.' }],
+            },
+          },
+        ],
+      } as GenerateContentResponse;
+    })();
+    mockChat.sendMessageStream
+      .mockResolvedValueOnce(stream1)
+      .mockResolvedValueOnce(stream2);
+    const consoleErrorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+
+    await runNonInteractive(mockConfig, 'Trigger tool not found');
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      'Error executing tool nonExistentTool: Tool "nonExistentTool" not found in registry.',
+    );
+
+    expect(mockProcessExit).not.toHaveBeenCalled();
+
+    expect(mockChat.sendMessageStream).toHaveBeenCalledTimes(2);
+    expect(mockChat.sendMessageStream).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: [errorResponsePart],
+      }),
+    );
+
+    expect(mockProcessStdoutWrite).toHaveBeenCalledWith(
+      'Unfortunately the tool does not exist.',
     );
   });
 });

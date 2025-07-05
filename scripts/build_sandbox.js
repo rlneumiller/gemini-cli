@@ -77,18 +77,23 @@ if (!argv.s) {
   execSync('npm run build --workspaces', { stdio: 'inherit' });
 }
 
-console.log('packing @gemini-cli/cli ...');
+console.log('packing @google/gemini-cli ...');
 const cliPackageDir = join('packages', 'cli');
-rmSync(join(cliPackageDir, 'dist', 'gemini-cli-cli-*.tgz'), { force: true });
-execSync(`npm pack -w @gemini-cli/cli --pack-destination ./packages/cli/dist`, {
-  stdio: 'ignore',
-});
-
-console.log('packing @gemini-cli/core ...');
-const corePackageDir = join('packages', 'core');
-rmSync(join(corePackageDir, 'dist', 'gemini-cli-core-*.tgz'), { force: true });
+rmSync(join(cliPackageDir, 'dist', 'google-gemini-cli-*.tgz'), { force: true });
 execSync(
-  `npm pack -w @gemini-cli/core --pack-destination ./packages/core/dist`,
+  `npm pack -w @google/gemini-cli --pack-destination ./packages/cli/dist`,
+  {
+    stdio: 'ignore',
+  },
+);
+
+console.log('packing @google/gemini-cli-core ...');
+const corePackageDir = join('packages', 'core');
+rmSync(join(corePackageDir, 'dist', 'google-gemini-cli-core-*.tgz'), {
+  force: true,
+});
+execSync(
+  `npm pack -w @google/gemini-cli-core --pack-destination ./packages/core/dist`,
   { stdio: 'ignore' },
 );
 
@@ -97,11 +102,11 @@ const packageVersion = JSON.parse(
 ).version;
 
 chmodSync(
-  join(cliPackageDir, 'dist', `gemini-cli-cli-${packageVersion}.tgz`),
+  join(cliPackageDir, 'dist', `google-gemini-cli-${packageVersion}.tgz`),
   0o755,
 );
 chmodSync(
-  join(corePackageDir, 'dist', `gemini-cli-core-${packageVersion}.tgz`),
+  join(corePackageDir, 'dist', `google-gemini-cli-core-${packageVersion}.tgz`),
   0o755,
 );
 
@@ -118,26 +123,17 @@ function buildImage(imageName, dockerfile) {
     readFileSync(join(process.cwd(), 'package.json'), 'utf-8'),
   ).version;
 
-  try {
-    execSync(
-      `${buildCommand} ${
-        process.env.BUILD_SANDBOX_FLAGS || ''
-      } --build-arg CLI_VERSION_ARG=${npmPackageVersion} -f "${dockerfile}" -t "${imageName}" .`,
-      { stdio: buildStdout, shell: '/bin/bash' },
-    );
-  } catch (e) {
-    console.error(`\nError building sandbox image "${imageName}".`);
-    if (e.stdout?.length) {
-      console.error('--- STDOUT ---');
-      console.error(e.stdout.toString());
-    }
-    if (e.stderr?.length) {
-      console.error('--- STDERR ---');
-      console.error(e.stderr.toString());
-    }
-    process.exit(1);
-  }
-  console.log(`built ${imageName}`);
+  const imageTag =
+    process.env.GEMINI_SANDBOX_IMAGE_TAG || imageName.split(':')[1];
+  const finalImageName = `${imageName.split(':')[0]}:${imageTag}`;
+
+  execSync(
+    `${buildCommand} ${
+      process.env.BUILD_SANDBOX_FLAGS || ''
+    } --build-arg CLI_VERSION_ARG=${npmPackageVersion} -f "${dockerfile}" -t "${finalImageName}" .`,
+    { stdio: buildStdout, shell: '/bin/bash' },
+  );
+  console.log(`built ${finalImageName}`);
 }
 
 if (baseImage && baseDockerfile) {

@@ -15,7 +15,7 @@ import {
   getErrorMessage,
   Config,
   FileDiscoveryService,
-} from '@gemini-cli/core';
+} from '@google/gemini-cli-core';
 import {
   MAX_SUGGESTIONS_TO_SHOW,
   Suggestion,
@@ -135,7 +135,8 @@ export function useCompletion(
         (cmd) => cmd.name === commandName || cmd.altName === commandName,
       );
 
-      if (command && command.completion) {
+      // Continue to show command help until user types past command name.
+      if (command && command.completion && parts.length > 1) {
         const fetchAndSetSuggestions = async () => {
           setIsLoadingSuggestions(true);
           if (command.completion) {

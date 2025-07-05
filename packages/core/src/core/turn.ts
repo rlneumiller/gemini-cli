@@ -9,7 +9,6 @@ import {
   GenerateContentResponse,
   FunctionCall,
   FunctionDeclaration,
-  GenerateContentResponseUsageMetadata,
 } from '@google/genai';
 import {
   ToolCallConfirmationDetails,
@@ -18,9 +17,12 @@ import {
 } from '../tools/tools.js';
 import { getResponseText } from '../utils/generateContentResponseUtilities.js';
 import { reportError } from '../utils/errorReporting.js';
-import { getErrorMessage } from '../utils/errors.js';
+import {
+  getErrorMessage,
+  UnauthorizedError,
+  toFriendlyError,
+} from '../utils/errors.js';
 import { GeminiChat } from './geminiChat.js';
-import { isAuthError } from '../code_assist/errors.js';
 
 // Define a structure for tools passed to the server
 export interface ServerTool {
@@ -45,18 +47,23 @@ export enum GeminiEventType {
   UserCancelled = 'user_cancelled',
   Error = 'error',
   ChatCompressed = 'chat_compressed',
-  UsageMetadata = 'usage_metadata',
   Thought = 'thought',
 }
 
-export interface GeminiErrorEventValue {
+export interface StructuredError {
   message: string;
+  status?: number;
+}
+
+export interface GeminiErrorEventValue {
+  error: StructuredError;
 }
 
 export interface ToolCallRequestInfo {
   callId: string;
   name: string;
   args: Record<string, unknown>;
+  isClientInitiated: boolean;
 }
 
 export interface ToolCallResponseInfo {
@@ -120,11 +127,6 @@ export type ServerGeminiChatCompressedEvent = {
   value: ChatCompressionInfo | null;
 };
 
-export type ServerGeminiUsageMetadataEvent = {
-  type: GeminiEventType.UsageMetadata;
-  value: GenerateContentResponseUsageMetadata & { apiTimeMs?: number };
-};
-
 // The original union type, now composed of the individual types
 export type ServerGeminiStreamEvent =
   | ServerGeminiContentEvent
@@ -134,18 +136,12 @@ export type ServerGeminiStreamEvent =
   | ServerGeminiUserCancelledEvent
   | ServerGeminiErrorEvent
   | ServerGeminiChatCompressedEvent
-  | ServerGeminiUsageMetadataEvent
   | ServerGeminiThoughtEvent;
 
 // A turn manages the agentic loop turn within the server context.
 export class Turn {
-  readonly pendingToolCalls: Array<{
-    callId: string;
-    name: string;
-    args: Record<string, unknown>;
-  }>;
+  readonly pendingToolCalls: ToolCallRequestInfo[];
   private debugResponses: GenerateContentResponse[];
-  private lastUsageMetadata: GenerateContentResponseUsageMetadata | null = null;
 
   constructor(private readonly chat: GeminiChat) {
     this.pendingToolCalls = [];
@@ -156,7 +152,6 @@ export class Turn {
     req: PartListUnion,
     signal: AbortSignal,
   ): AsyncGenerator<ServerGeminiStreamEvent> {
-    const startTime = Date.now();
     try {
       const responseStream = await this.chat.sendMessageStream({
         message: req,
@@ -208,22 +203,10 @@ export class Turn {
             yield event;
           }
         }
-
-        if (resp.usageMetadata) {
-          this.lastUsageMetadata =
-            resp.usageMetadata as GenerateContentResponseUsageMetadata;
-        }
       }
-
-      if (this.lastUsageMetadata) {
-        const durationMs = Date.now() - startTime;
-        yield {
-          type: GeminiEventType.UsageMetadata,
-          value: { ...this.lastUsageMetadata, apiTimeMs: durationMs },
-        };
-      }
-    } catch (error) {
-      if (isAuthError(error)) {
+    } catch (e) {
+      const error = toFriendlyError(e);
+      if (error instanceof UnauthorizedError) {
         throw error;
       }
       if (signal.aborted) {
@@ -239,8 +222,18 @@ export class Turn {
         contextForReport,
         'Turn.run-sendMessageStream',
       );
-      const errorMessage = getErrorMessage(error);
-      yield { type: GeminiEventType.Error, value: { message: errorMessage } };
+      const status =
+        typeof error === 'object' &&
+        error !== null &&
+        'status' in error &&
+        typeof (error as { status: unknown }).status === 'number'
+          ? (error as { status: number }).status
+          : undefined;
+      const structuredError: StructuredError = {
+        message: getErrorMessage(error),
+        status,
+      };
+      yield { type: GeminiEventType.Error, value: { error: structuredError } };
       return;
     }
   }
@@ -254,18 +247,20 @@ export class Turn {
     const name = fnCall.name || 'undefined_tool_name';
     const args = (fnCall.args || {}) as Record<string, unknown>;
 
-    this.pendingToolCalls.push({ callId, name, args });
+    const toolCallRequest: ToolCallRequestInfo = {
+      callId,
+      name,
+      args,
+      isClientInitiated: false,
+    };
+
+    this.pendingToolCalls.push(toolCallRequest);
 
     // Yield a request for the tool call, not the pending/confirming status
-    const value: ToolCallRequestInfo = { callId, name, args };
-    return { type: GeminiEventType.ToolCallRequest, value };
+    return { type: GeminiEventType.ToolCallRequest, value: toolCallRequest };
   }
 
   getDebugResponses(): GenerateContentResponse[] {
     return this.debugResponses;
-  }
-
-  getUsageMetadata(): GenerateContentResponseUsageMetadata | null {
-    return this.lastUsageMetadata;
   }
 }

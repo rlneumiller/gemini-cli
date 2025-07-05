@@ -25,16 +25,17 @@ export {
   logApiRequest,
   logApiError,
   logApiResponse,
-  getFinalUsageMetadata,
 } from './loggers.js';
 export {
+  StartSessionEvent,
+  EndSessionEvent,
   UserPromptEvent,
   ToolCallEvent,
   ApiRequestEvent,
   ApiErrorEvent,
   ApiResponseEvent,
-  CliConfigEvent,
   TelemetryEvent,
 } from './types.js';
 export { SpanStatusCode, ValueType } from '@opentelemetry/api';
 export { SemanticAttributes } from '@opentelemetry/semantic-conventions';
+export * from './uiTelemetry.js';

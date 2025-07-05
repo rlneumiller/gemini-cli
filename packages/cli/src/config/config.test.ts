@@ -9,15 +9,13 @@ import * as os from 'os';
 import { loadCliConfig } from './config.js';
 import { Settings } from './settings.js';
 import { Extension } from './extension.js';
-import * as ServerConfig from '@gemini-cli/core';
-
-const MOCK_HOME_DIR = '/mock/home/user';
+import * as ServerConfig from '@google/gemini-cli-core';
 
 vi.mock('os', async (importOriginal) => {
   const actualOs = await importOriginal<typeof os>();
   return {
     ...actualOs,
-    homedir: vi.fn(() => MOCK_HOME_DIR),
+    homedir: vi.fn(() => '/mock/home/user'),
   };
 });
 
@@ -31,9 +29,10 @@ vi.mock('read-package-up', () => ({
   ),
 }));
 
-vi.mock('@gemini-cli/core', async () => {
-  const actualServer =
-    await vi.importActual<typeof ServerConfig>('@gemini-cli/core');
+vi.mock('@google/gemini-cli-core', async () => {
+  const actualServer = await vi.importActual<typeof ServerConfig>(
+    '@google/gemini-cli-core',
+  );
   return {
     ...actualServer,
     loadEnvironment: vi.fn(),
@@ -53,7 +52,7 @@ describe('loadCliConfig', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
-    vi.mocked(os.homedir).mockReturnValue(MOCK_HOME_DIR);
+    vi.mocked(os.homedir).mockReturnValue('/mock/home/user');
     process.env.GEMINI_API_KEY = 'test-api-key'; // Ensure API key is set for tests
   });
 
@@ -98,7 +97,7 @@ describe('loadCliConfig telemetry', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
-    vi.mocked(os.homedir).mockReturnValue(MOCK_HOME_DIR);
+    vi.mocked(os.homedir).mockReturnValue('/mock/home/user');
     process.env.GEMINI_API_KEY = 'test-api-key';
   });
 
@@ -250,7 +249,7 @@ describe('loadCliConfig telemetry', () => {
 describe('Hierarchical Memory Loading (config.ts) - Placeholder Suite', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    vi.mocked(os.homedir).mockReturnValue(MOCK_HOME_DIR);
+    vi.mocked(os.homedir).mockReturnValue('/mock/home/user');
     // Other common mocks would be reset here.
   });
 
@@ -310,7 +309,7 @@ describe('Hierarchical Memory Loading (config.ts) - Placeholder Suite', () => {
   // Example of a previously failing test structure:
   /*
   it('should correctly use mocked homedir for global path', async () => {
-    const MOCK_GEMINI_DIR_LOCAL = path.join(MOCK_HOME_DIR, '.gemini');
+    const MOCK_GEMINI_DIR_LOCAL = path.join('/mock/home/user', '.gemini');
     const MOCK_GLOBAL_PATH_LOCAL = path.join(MOCK_GEMINI_DIR_LOCAL, 'GEMINI.md');
     mockFs({
       [MOCK_GLOBAL_PATH_LOCAL]: { type: 'file', content: 'GlobalContentOnly' }
@@ -342,6 +341,134 @@ describe('mergeMcpServers', () => {
               url: 'http://localhost:8081',
             },
           },
+        },
+        contextFiles: [],
+      },
+    ];
+    const originalSettings = JSON.parse(JSON.stringify(settings));
+    await loadCliConfig(settings, extensions, 'test-session');
+    expect(settings).toEqual(originalSettings);
+  });
+});
+
+describe('mergeExcludeTools', () => {
+  it('should merge excludeTools from settings and extensions', async () => {
+    const settings: Settings = { excludeTools: ['tool1', 'tool2'] };
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'ext1',
+          version: '1.0.0',
+          excludeTools: ['tool3', 'tool4'],
+        },
+        contextFiles: [],
+      },
+      {
+        config: {
+          name: 'ext2',
+          version: '1.0.0',
+          excludeTools: ['tool5'],
+        },
+        contextFiles: [],
+      },
+    ];
+    const config = await loadCliConfig(settings, extensions, 'test-session');
+    expect(config.getExcludeTools()).toEqual(
+      expect.arrayContaining(['tool1', 'tool2', 'tool3', 'tool4', 'tool5']),
+    );
+    expect(config.getExcludeTools()).toHaveLength(5);
+  });
+
+  it('should handle overlapping excludeTools between settings and extensions', async () => {
+    const settings: Settings = { excludeTools: ['tool1', 'tool2'] };
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'ext1',
+          version: '1.0.0',
+          excludeTools: ['tool2', 'tool3'],
+        },
+        contextFiles: [],
+      },
+    ];
+    const config = await loadCliConfig(settings, extensions, 'test-session');
+    expect(config.getExcludeTools()).toEqual(
+      expect.arrayContaining(['tool1', 'tool2', 'tool3']),
+    );
+    expect(config.getExcludeTools()).toHaveLength(3);
+  });
+
+  it('should handle overlapping excludeTools between extensions', async () => {
+    const settings: Settings = { excludeTools: ['tool1'] };
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'ext1',
+          version: '1.0.0',
+          excludeTools: ['tool2', 'tool3'],
+        },
+        contextFiles: [],
+      },
+      {
+        config: {
+          name: 'ext2',
+          version: '1.0.0',
+          excludeTools: ['tool3', 'tool4'],
+        },
+        contextFiles: [],
+      },
+    ];
+    const config = await loadCliConfig(settings, extensions, 'test-session');
+    expect(config.getExcludeTools()).toEqual(
+      expect.arrayContaining(['tool1', 'tool2', 'tool3', 'tool4']),
+    );
+    expect(config.getExcludeTools()).toHaveLength(4);
+  });
+
+  it('should return an empty array when no excludeTools are specified', async () => {
+    const settings: Settings = {};
+    const extensions: Extension[] = [];
+    const config = await loadCliConfig(settings, extensions, 'test-session');
+    expect(config.getExcludeTools()).toEqual([]);
+  });
+
+  it('should handle settings with excludeTools but no extensions', async () => {
+    const settings: Settings = { excludeTools: ['tool1', 'tool2'] };
+    const extensions: Extension[] = [];
+    const config = await loadCliConfig(settings, extensions, 'test-session');
+    expect(config.getExcludeTools()).toEqual(
+      expect.arrayContaining(['tool1', 'tool2']),
+    );
+    expect(config.getExcludeTools()).toHaveLength(2);
+  });
+
+  it('should handle extensions with excludeTools but no settings', async () => {
+    const settings: Settings = {};
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'ext1',
+          version: '1.0.0',
+          excludeTools: ['tool1', 'tool2'],
+        },
+        contextFiles: [],
+      },
+    ];
+    const config = await loadCliConfig(settings, extensions, 'test-session');
+    expect(config.getExcludeTools()).toEqual(
+      expect.arrayContaining(['tool1', 'tool2']),
+    );
+    expect(config.getExcludeTools()).toHaveLength(2);
+  });
+
+  it('should not modify the original settings object', async () => {
+    const settings: Settings = { excludeTools: ['tool1'] };
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'ext1',
+          version: '1.0.0',
+          excludeTools: ['tool2'],
         },
         contextFiles: [],
       },

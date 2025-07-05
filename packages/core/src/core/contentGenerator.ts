@@ -35,8 +35,7 @@ export interface ContentGenerator {
 }
 
 export enum AuthType {
-  LOGIN_WITH_GOOGLE_PERSONAL = 'oauth-personal',
-  LOGIN_WITH_GOOGLE_ENTERPRISE = 'oauth-enterprise',
+  LOGIN_WITH_GOOGLE = 'oauth-personal',
   USE_GEMINI = 'gemini-api-key',
   USE_VERTEX_AI = 'vertex-ai',
 }
@@ -51,31 +50,26 @@ export type ContentGeneratorConfig = {
 export async function createContentGeneratorConfig(
   model: string | undefined,
   authType: AuthType | undefined,
+  config?: { getModel?: () => string },
 ): Promise<ContentGeneratorConfig> {
   const geminiApiKey = process.env.GEMINI_API_KEY;
   const googleApiKey = process.env.GOOGLE_API_KEY;
   const googleCloudProject = process.env.GOOGLE_CLOUD_PROJECT;
   const googleCloudLocation = process.env.GOOGLE_CLOUD_LOCATION;
 
+  // Use runtime model from config if available, otherwise fallback to parameter or default
+  const effectiveModel = config?.getModel?.() || model || DEFAULT_GEMINI_MODEL;
+
   const contentGeneratorConfig: ContentGeneratorConfig = {
-    model: model || DEFAULT_GEMINI_MODEL,
+    model: effectiveModel,
     authType,
   };
 
   // if we are using google auth nothing else to validate for now
-  if (authType === AuthType.LOGIN_WITH_GOOGLE_PERSONAL) {
+  if (authType === AuthType.LOGIN_WITH_GOOGLE) {
     return contentGeneratorConfig;
   }
 
-  // if its enterprise make sure we have a cloud project
-  if (
-    authType === AuthType.LOGIN_WITH_GOOGLE_ENTERPRISE &&
-    !!googleCloudProject
-  ) {
-    return contentGeneratorConfig;
-  }
-
-  //
   if (authType === AuthType.USE_GEMINI && geminiApiKey) {
     contentGeneratorConfig.apiKey = geminiApiKey;
     contentGeneratorConfig.model = await getEffectiveModel(
@@ -107,18 +101,20 @@ export async function createContentGeneratorConfig(
 
 export async function createContentGenerator(
   config: ContentGeneratorConfig,
+  sessionId?: string,
 ): Promise<ContentGenerator> {
   const version = process.env.CLI_VERSION || process.version;
   const httpOptions = {
     headers: {
-      'User-Agent': `GeminiCLI/${version}/(${process.platform}; ${process.arch})`,
+      'User-Agent': `GeminiCLI/${version} (${process.platform}; ${process.arch})`,
     },
   };
-  if (
-    config.authType === AuthType.LOGIN_WITH_GOOGLE_PERSONAL ||
-    config.authType === AuthType.LOGIN_WITH_GOOGLE_ENTERPRISE
-  ) {
-    return createCodeAssistContentGenerator(httpOptions, config.authType);
+  if (config.authType === AuthType.LOGIN_WITH_GOOGLE) {
+    return createCodeAssistContentGenerator(
+      httpOptions,
+      config.authType,
+      sessionId,
+    );
   }
 
   if (

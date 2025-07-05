@@ -107,39 +107,33 @@ export const MaxSizedBox: React.FC<MaxSizedBoxProps> = ({
   const { addOverflowingId, removeOverflowingId } = useOverflowActions() || {};
 
   const laidOutStyledText: StyledText[][] = [];
-  // When maxHeight is not set, we render the content normally rather
-  // than using our custom layout logic. This should slightly improve
-  // performance for the case where there is no height limit and is
-  // a useful debugging tool to ensure that our layouts are consist
-  // with the expected layout when there is no height limit.
-  // In the future we might choose to still apply our layout logic
-  // even in this case particularlly if there are cases where we
-  // intentionally diverse how certain layouts are rendered.
-  let targetMaxHeight;
-  if (maxHeight !== undefined) {
-    targetMaxHeight = Math.max(Math.round(maxHeight), MINIMUM_MAX_HEIGHT);
+  const targetMaxHeight = Math.max(
+    Math.round(maxHeight ?? Number.MAX_SAFE_INTEGER),
+    MINIMUM_MAX_HEIGHT,
+  );
 
-    if (maxWidth === undefined) {
-      throw new Error('maxWidth must be defined when maxHeight is set.');
-    }
-    function visitRows(element: React.ReactNode) {
-      if (!React.isValidElement(element)) {
-        return;
-      }
-      if (element.type === Fragment) {
-        React.Children.forEach(element.props.children, visitRows);
-        return;
-      }
-      if (element.type === Box) {
-        layoutInkElementAsStyledText(element, maxWidth!, laidOutStyledText);
-        return;
-      }
-
-      debugReportError('MaxSizedBox children must be <Box> elements', element);
-    }
-
-    React.Children.forEach(children, visitRows);
+  if (maxWidth === undefined) {
+    throw new Error('maxWidth must be defined when maxHeight is set.');
   }
+  function visitRows(element: React.ReactNode) {
+    if (!React.isValidElement<{ children?: React.ReactNode }>(element)) {
+      return;
+    }
+
+    if (element.type === Fragment) {
+      React.Children.forEach(element.props.children, visitRows);
+      return;
+    }
+
+    if (element.type === Box) {
+      layoutInkElementAsStyledText(element, maxWidth!, laidOutStyledText);
+      return;
+    }
+
+    debugReportError('MaxSizedBox children must be <Box> elements', element);
+  }
+
+  React.Children.forEach(children, visitRows);
 
   const contentWillOverflow =
     (targetMaxHeight !== undefined &&
@@ -167,14 +161,6 @@ export const MaxSizedBox: React.FC<MaxSizedBoxProps> = ({
       removeOverflowingId?.(id);
     };
   }, [id, totalHiddenLines, addOverflowingId, removeOverflowingId]);
-
-  if (maxHeight === undefined) {
-    return (
-      <Box width={maxWidth} height={maxHeight} flexDirection="column">
-        {children}
-      </Box>
-    );
-  }
 
   const visibleStyledText =
     hiddenLinesCount > 0
@@ -262,7 +248,10 @@ interface Row {
  * @returns An array of `Row` objects.
  */
 function visitBoxRow(element: React.ReactNode): Row {
-  if (!React.isValidElement(element) || element.type !== Box) {
+  if (
+    !React.isValidElement<{ children?: React.ReactNode }>(element) ||
+    element.type !== Box
+  ) {
     debugReportError(
       `All children of MaxSizedBox must be <Box> elements`,
       element,
@@ -274,14 +263,25 @@ function visitBoxRow(element: React.ReactNode): Row {
   }
 
   if (enableDebugLog) {
-    const boxProps = element.props;
+    const boxProps = element.props as {
+      children?: React.ReactNode | undefined;
+      readonly flexDirection?:
+        | 'row'
+        | 'column'
+        | 'row-reverse'
+        | 'column-reverse'
+        | undefined;
+    };
     // Ensure the Box has no props other than the default ones and key.
     let maxExpectedProps = 4;
     if (boxProps.children !== undefined) {
       // Allow the key prop, which is automatically added by React.
       maxExpectedProps += 1;
     }
-    if (boxProps.flexDirection !== 'row') {
+    if (
+      boxProps.flexDirection !== undefined &&
+      boxProps.flexDirection !== 'row'
+    ) {
       debugReportError(
         'MaxSizedBox children must have flexDirection="row".',
         element,
@@ -328,7 +328,7 @@ function visitBoxRow(element: React.ReactNode): Row {
         if (!hasSeenWrapped) {
           row.noWrapSegments.push(segment);
         } else {
-          // put in in the wrapped segment as the row is already stuck in wrapped mode.
+          // put in the wrapped segment as the row is already stuck in wrapped mode.
           row.segments.push(segment);
           debugReportError(
             'Text elements without wrapping cannot appear after elements with wrapping in the same row.',
@@ -339,14 +339,13 @@ function visitBoxRow(element: React.ReactNode): Row {
       return;
     }
 
-    if (!React.isValidElement(element)) {
+    if (!React.isValidElement<{ children?: React.ReactNode }>(element)) {
       debugReportError('Invalid element.', element);
       return;
     }
 
     if (element.type === Fragment) {
-      const fragmentChildren = element.props.children;
-      React.Children.forEach(fragmentChildren, (child) =>
+      React.Children.forEach(element.props.children, (child) =>
         visitRowChild(child, parentProps),
       );
       return;
@@ -424,7 +423,9 @@ function layoutInkElementAsStyledText(
     ) {
       lines.push(currentLine);
     }
-    output.push(...lines);
+    for (const line of lines) {
+      output.push(line);
+    }
     return;
   }
 
@@ -540,5 +541,7 @@ function layoutInkElementAsStyledText(
   if (wrappingPart.length > 0) {
     addWrappingPartToLines();
   }
-  output.push(...lines);
+  for (const line of lines) {
+    output.push(line);
+  }
 }

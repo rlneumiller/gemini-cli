@@ -10,6 +10,7 @@ import {
   CoreToolScheduler,
   ToolCall,
   ValidatingToolCall,
+  convertToFunctionResponse,
 } from './coreToolScheduler.js';
 import {
   BaseTool,
@@ -19,7 +20,6 @@ import {
   Config,
 } from '../index.js';
 import { Part, PartListUnion } from '@google/genai';
-import { convertToFunctionResponse } from './coreToolScheduler.js';
 
 class MockTool extends BaseTool<Record<string, unknown>, ToolResult> {
   shouldConfirm = false;
@@ -77,7 +77,9 @@ describe('CoreToolScheduler', () => {
 
     const mockConfig = {
       getSessionId: () => 'test-session-id',
-    } as Config;
+      getUsageStatisticsEnabled: () => true,
+      getDebugMode: () => false,
+    } as unknown as Config;
 
     const scheduler = new CoreToolScheduler({
       config: mockConfig,
@@ -88,7 +90,12 @@ describe('CoreToolScheduler', () => {
     });
 
     const abortController = new AbortController();
-    const request = { callId: '1', name: 'mockTool', args: {} };
+    const request = {
+      callId: '1',
+      name: 'mockTool',
+      args: {},
+      isClientInitiated: false,
+    };
 
     abortController.abort();
     await scheduler.schedule([request], abortController.signal);

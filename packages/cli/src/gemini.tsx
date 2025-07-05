@@ -8,14 +8,17 @@ import React from 'react';
 import { render } from 'ink';
 import { AppWrapper } from './ui/App.js';
 import { loadCliConfig } from './config/config.js';
-import { resolvePromptFromFile } from './utils/prompt.js';
 import { readStdin } from './utils/readStdin.js';
 import { basename } from 'node:path';
+import v8 from 'node:v8';
+import os from 'node:os';
+import { spawn } from 'node:child_process';
 import { start_sandbox } from './utils/sandbox.js';
 import {
   LoadedSettings,
   loadSettings,
   SettingScope,
+  USER_SETTINGS_PATH,
 } from './config/settings.js';
 import { themeManager } from './ui/themes/theme-manager.js';
 import { getStartupWarnings } from './utils/startupWarnings.js';
@@ -31,9 +34,53 @@ import {
   sessionId,
   logUserPrompt,
   AuthType,
-} from '@gemini-cli/core';
+} from '@google/gemini-cli-core';
 import { validateAuthMethod } from './config/auth.js';
 import { setMaxSizedBoxDebugging } from './ui/components/shared/MaxSizedBox.js';
+
+function getNodeMemoryArgs(config: Config): string[] {
+  const totalMemoryMB = os.totalmem() / (1024 * 1024);
+  const heapStats = v8.getHeapStatistics();
+  const currentMaxOldSpaceSizeMb = Math.floor(
+    heapStats.heap_size_limit / 1024 / 1024,
+  );
+
+  // Set target to 50% of total memory
+  const targetMaxOldSpaceSizeInMB = Math.floor(totalMemoryMB * 0.5);
+  if (config.getDebugMode()) {
+    console.debug(
+      `Current heap size ${currentMaxOldSpaceSizeMb.toFixed(2)} MB`,
+    );
+  }
+
+  if (process.env.GEMINI_CLI_NO_RELAUNCH) {
+    return [];
+  }
+
+  if (targetMaxOldSpaceSizeInMB > currentMaxOldSpaceSizeMb) {
+    if (config.getDebugMode()) {
+      console.debug(
+        `Need to relaunch with more memory: ${targetMaxOldSpaceSizeInMB.toFixed(2)} MB`,
+      );
+    }
+    return [`--max-old-space-size=${targetMaxOldSpaceSizeInMB}`];
+  }
+
+  return [];
+}
+
+async function relaunchWithAdditionalArgs(additionalArgs: string[]) {
+  const nodeArgs = [...additionalArgs, ...process.argv.slice(1)];
+  const newEnv = { ...process.env, GEMINI_CLI_NO_RELAUNCH: 'true' };
+
+  const child = spawn(process.execPath, nodeArgs, {
+    stdio: 'inherit',
+    env: newEnv,
+  });
+
+  await new Promise((resolve) => child.on('close', resolve));
+  process.exit(0);
+}
 
 export async function main() {
   const workspaceRoot = process.cwd();
@@ -56,7 +103,7 @@ export async function main() {
   const config = await loadCliConfig(settings.merged, extensions, sessionId);
 
   // set default fallback to gemini api key
-  // this has to go after load cli becuase thats where the env is set
+  // this has to go after load cli because that's where the env is set
   if (!settings.merged.selectedAuthType && process.env.GEMINI_API_KEY) {
     settings.setValue(
       SettingScope.User,
@@ -85,25 +132,39 @@ export async function main() {
     }
   }
 
+  const memoryArgs = settings.merged.autoConfigureMaxOldSpaceSize
+    ? getNodeMemoryArgs(config)
+    : [];
+
   // hop into sandbox if we are outside and sandboxing is enabled
   if (!process.env.SANDBOX) {
     const sandboxConfig = config.getSandbox();
     if (sandboxConfig) {
       if (settings.merged.selectedAuthType) {
         // Validate authentication here because the sandbox will interfere with the Oauth2 web redirect.
-        const err = validateAuthMethod(settings.merged.selectedAuthType);
-        if (err) {
-          console.error(err);
+        try {
+          const err = validateAuthMethod(settings.merged.selectedAuthType);
+          if (err) {
+            throw new Error(err);
+          }
+          await config.refreshAuth(settings.merged.selectedAuthType);
+        } catch (err) {
+          console.error('Error authenticating:', err);
           process.exit(1);
         }
-        await config.refreshAuth(settings.merged.selectedAuthType);
       }
-      await start_sandbox(sandboxConfig);
+      await start_sandbox(sandboxConfig, memoryArgs);
       process.exit(0);
+    } else {
+      // Not in a sandbox and not entering one, so relaunch with additional
+      // arguments to control memory usage if needed.
+      if (memoryArgs.length > 0) {
+        await relaunchWithAdditionalArgs(memoryArgs);
+        process.exit(0);
+      }
     }
   }
-
-  let input = resolvePromptFromFile(config.getQuestion() ?? '', workspaceRoot);
+  let input = config.getQuestion();
   const startupWarnings = await getStartupWarnings();
 
   // Render UI, passing necessary config values. Check that there is no command line question.
@@ -123,7 +184,7 @@ export async function main() {
   }
   // If not a TTY, read from stdin
   // This is for cases where the user pipes input directly into the command
-  if (!process.stdin.isTTY) {
+  if (!process.stdin.isTTY && !input) {
     input += await readStdin();
   }
   if (!input) {
@@ -132,6 +193,8 @@ export async function main() {
   }
 
   logUserPrompt(config, {
+    'event.name': 'user_prompt',
+    'event.timestamp': new Date().toISOString(),
     prompt: input,
     prompt_length: input.length,
   });
@@ -217,7 +280,7 @@ async function validateNonInterActiveAuth(
   // still expect that exists
   if (!selectedAuthType && !process.env.GEMINI_API_KEY) {
     console.error(
-      'Please set an Auth method in your .gemini/settings.json OR specify GEMINI_API_KEY env variable file before running',
+      `Please set an Auth method in your ${USER_SETTINGS_PATH} OR specify GEMINI_API_KEY env variable file before running`,
     );
     process.exit(1);
   }

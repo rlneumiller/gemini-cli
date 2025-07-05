@@ -6,10 +6,25 @@
 
 import { execSync, spawn } from 'child_process';
 
-export type EditorType = 'vscode' | 'windsurf' | 'cursor' | 'vim';
+export type EditorType =
+  | 'vscode'
+  | 'vscodium'
+  | 'windsurf'
+  | 'cursor'
+  | 'vim'
+  | 'neovim'
+  | 'zed';
 
 function isValidEditorType(editor: string): editor is EditorType {
-  return ['vscode', 'windsurf', 'cursor', 'vim'].includes(editor);
+  return [
+    'vscode',
+    'vscodium',
+    'windsurf',
+    'cursor',
+    'vim',
+    'neovim',
+    'zed',
+  ].includes(editor);
 }
 
 interface DiffCommand {
@@ -31,9 +46,12 @@ function commandExists(cmd: string): boolean {
 
 const editorCommands: Record<EditorType, { win32: string; default: string }> = {
   vscode: { win32: 'code.cmd', default: 'code' },
+  vscodium: { win32: 'codium.cmd', default: 'codium' },
   windsurf: { win32: 'windsurf', default: 'windsurf' },
   cursor: { win32: 'cursor', default: 'cursor' },
   vim: { win32: 'vim', default: 'vim' },
+  neovim: { win32: 'nvim', default: 'nvim' },
+  zed: { win32: 'zed', default: 'zed' },
 };
 
 export function checkHasEditorType(editor: EditorType): boolean {
@@ -45,7 +63,7 @@ export function checkHasEditorType(editor: EditorType): boolean {
 
 export function allowEditorTypeInSandbox(editor: EditorType): boolean {
   const notUsingSandbox = !process.env.SANDBOX;
-  if (['vscode', 'windsurf', 'cursor'].includes(editor)) {
+  if (['vscode', 'vscodium', 'windsurf', 'cursor', 'zed'].includes(editor)) {
     return notUsingSandbox;
   }
   return true;
@@ -57,10 +75,7 @@ export function allowEditorTypeInSandbox(editor: EditorType): boolean {
  */
 export function isEditorAvailable(editor: string | undefined): boolean {
   if (editor && isValidEditorType(editor)) {
-    return (
-      checkHasEditorType(editor as EditorType) &&
-      allowEditorTypeInSandbox(editor as EditorType)
-    );
+    return checkHasEditorType(editor) && allowEditorTypeInSandbox(editor);
   }
   return false;
 }
@@ -73,25 +88,23 @@ export function getDiffCommand(
   newPath: string,
   editor: EditorType,
 ): DiffCommand | null {
+  if (!isValidEditorType(editor)) {
+    return null;
+  }
+  const commandConfig = editorCommands[editor];
+  const command =
+    process.platform === 'win32' ? commandConfig.win32 : commandConfig.default;
   switch (editor) {
     case 'vscode':
-      return {
-        command: 'code',
-        args: ['--wait', '--diff', oldPath, newPath],
-      };
+    case 'vscodium':
     case 'windsurf':
-      return {
-        command: 'windsurf',
-        args: ['--wait', '--diff', oldPath, newPath],
-      };
     case 'cursor':
-      return {
-        command: 'cursor',
-        args: ['--wait', '--diff', oldPath, newPath],
-      };
+    case 'zed':
+      return { command, args: ['--wait', '--diff', oldPath, newPath] };
     case 'vim':
+    case 'neovim':
       return {
-        command: 'vim',
+        command,
         args: [
           '-d',
           // skip viminfo file to avoid E138 errors
@@ -125,7 +138,7 @@ export function getDiffCommand(
 /**
  * Opens a diff tool to compare two files.
  * Terminal-based editors by default blocks parent process until the editor exits.
- * GUI-based editors requires args such as "--wait" to block parent process.
+ * GUI-based editors require args such as "--wait" to block parent process.
  */
 export async function openDiff(
   oldPath: string,
@@ -134,40 +147,53 @@ export async function openDiff(
 ): Promise<void> {
   const diffCommand = getDiffCommand(oldPath, newPath, editor);
   if (!diffCommand) {
-    console.error('No diff tool available. Install vim or vscode.');
+    console.error('No diff tool available. Install a supported editor.');
     return;
   }
 
   try {
-    if (editor === 'vscode') {
-      // Use spawn to avoid blocking the entire process, resolve this function when editor is closed.
-      return new Promise((resolve, reject) => {
-        const process = spawn(diffCommand.command, diffCommand.args, {
+    switch (editor) {
+      case 'vscode':
+      case 'vscodium':
+      case 'windsurf':
+      case 'cursor':
+      case 'zed':
+        // Use spawn for GUI-based editors to avoid blocking the entire process
+        return new Promise((resolve, reject) => {
+          const childProcess = spawn(diffCommand.command, diffCommand.args, {
+            stdio: 'inherit',
+            shell: true,
+          });
+
+          childProcess.on('close', (code) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`${editor} exited with code ${code}`));
+            }
+          });
+
+          childProcess.on('error', (error) => {
+            reject(error);
+          });
+        });
+
+      case 'vim':
+      case 'neovim': {
+        // Use execSync for terminal-based editors
+        const command =
+          process.platform === 'win32'
+            ? `${diffCommand.command} ${diffCommand.args.join(' ')}`
+            : `${diffCommand.command} ${diffCommand.args.map((arg) => `"${arg}"`).join(' ')}`;
+        execSync(command, {
           stdio: 'inherit',
+          encoding: 'utf8',
         });
+        break;
+      }
 
-        process.on('close', (code) => {
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`VS Code exited with code ${code}`));
-          }
-        });
-
-        process.on('error', (error) => {
-          reject(error);
-        });
-      });
-    } else {
-      // Use execSync for terminal-based editors like vim
-      const command =
-        process.platform === 'win32'
-          ? `${diffCommand.command} ${diffCommand.args.join(' ')}`
-          : `${diffCommand.command} ${diffCommand.args.map((arg) => `"${arg}"`).join(' ')}`;
-      execSync(command, {
-        stdio: 'inherit',
-        encoding: 'utf8',
-      });
+      default:
+        throw new Error(`Unsupported editor: ${editor}`);
     }
   } catch (error) {
     console.error(error);

@@ -1,10 +1,21 @@
 {
-  "name": "gemini-cli",
-  "version": "0.1.0",
+  "name": "@google/gemini-cli",
+  "version": "0.1.9",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "type": "module",
   "workspaces": [
     "packages/*"
   ],
+  "private": "true",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/google-gemini/gemini-cli.git"
+  },
+  "config": {
+    "sandboxImageUri": "us-docker.pkg.dev/gemini-code-dev/gemini-cli/sandbox:0.1.9"
+  },
   "scripts": {
     "generate": "node scripts/generate-git-commit-info.js",
     "build": "node scripts/build.js",
@@ -20,27 +31,29 @@
     "test:integration:sandbox:docker": "GEMINI_SANDBOX=docker node integration-tests/run-tests.js",
     "test:integration:sandbox:podman": "GEMINI_SANDBOX=podman node integration-tests/run-tests.js",
     "start": "node scripts/start.js",
-    "debug": "cross-env DEBUG=1 node scripts/start.js",
+    "debug": "cross-env DEBUG=1 node --inspect-brk scripts/start.js",
     "lint:fix": "eslint . --fix && eslint integration-tests --fix",
     "lint": "eslint . --ext .ts,.tsx && eslint integration-tests",
+    "lint:ci": "eslint . --ext .ts,.tsx --max-warnings 0 && eslint integration-tests --max-warnings 0",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "format": "prettier --write .",
-    "preflight": "npm run clean && npm ci && npm run format && npm run lint:fix && npm run build && npm run typecheck && npm run test:ci",
+    "preflight": "npm run clean && npm ci && npm run format && npm run lint:ci && npm run build && npm run typecheck && npm run test:ci",
     "auth:npm": "npx google-artifactregistry-auth",
     "auth:docker": "gcloud auth configure-docker us-west1-docker.pkg.dev",
     "auth": "npm run auth:npm && npm run auth:docker",
     "prerelease:dev": "npm run prerelease:version --workspaces && npm run prerelease:deps --workspaces",
     "bundle": "npm run generate && node esbuild.config.js && node scripts/copy_bundle_assets.js",
-    "build:cli": "npm run build --workspace packages/cli",
-    "build:core": "npm run build --workspace packages/core",
-    "build:packages": "npm run build:core && npm run build:cli",
-    "build:docker": "node scripts/build_sandbox.js -s",
-    "prepare:cli-packagejson": "node scripts/prepare-cli-packagejson.js",
+    "build:packages": "npm run build --workspaces",
+    "build:sandbox:fast": "node scripts/build_sandbox.js --skip-npm-install-build",
+    "prepare:package": "node scripts/prepare-package.js",
     "publish:sandbox": "node scripts/publish-sandbox.js",
     "publish:npm": "npm publish --workspaces ${NPM_PUBLISH_TAG:+--tag=$NPM_PUBLISH_TAG} ${NPM_DRY_RUN:+--dry-run}",
-    "publish:release": "npm run build:packages && npm run prepare:cli-packagejson && npm run build:docker && npm run publish:sandbox && npm run publish:npm",
-    "telemetry": "node scripts/telemetry.js",
-    "start:gcp": "npm run telemetry -- --target=gcp & npm start"
+    "publish:release": "npm run prepare:package && npm run build:packages && npm run build:sandbox:fast && npm run publish:sandbox && npm run publish:npm",
+    "prepublishOnly": "node scripts/check-versions.js && node scripts/prepublish.js",
+    "release:version": "node scripts/version.js",
+    "tag:release:nightly": "node scripts/tag-release.js",
+    "check:versions": "node scripts/check-versions.js",
+    "publish:actions-release": "npm run prepare:package && npm run build:packages && npm run publish:npm"
   },
   "bin": {
     "gemini": "bundle/gemini.js"
@@ -55,6 +68,7 @@
     "@types/mime-types": "^2.1.4",
     "@types/minimatch": "^5.1.2",
     "@vitest/coverage-v8": "^3.1.1",
+    "concurrently": "^9.2.0",
     "cross-env": "^7.0.3",
     "esbuild": "^0.25.0",
     "eslint": "^9.24.0",
@@ -72,5 +86,6 @@
     "react-devtools-core": "^4.28.5",
     "typescript-eslint": "^8.30.1",
     "yargs": "^17.7.2"
-  }
+  },
+  "dependencies": {}
 }

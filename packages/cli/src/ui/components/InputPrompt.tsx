@@ -19,7 +19,7 @@ import { useCompletion } from '../hooks/useCompletion.js';
 import { useKeypress, Key } from '../hooks/useKeypress.js';
 import { isAtCommand, isSlashCommand } from '../utils/commandUtils.js';
 import { SlashCommand } from '../hooks/slashCommandProcessor.js';
-import { Config } from '@gemini-cli/core';
+import { Config } from '@google/gemini-cli-core';
 
 export interface InputPromptProps {
   buffer: TextBuffer;
@@ -113,13 +113,26 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
       const query = buffer.text;
-      const selectedSuggestion = completionSuggestions[indexToUse];
+      const suggestion = completionSuggestions[indexToUse].value;
 
       if (query.trimStart().startsWith('/')) {
         const slashIndex = query.indexOf('/');
         const base = query.substring(0, slashIndex + 1);
-        const newValue = `${base}${selectedSuggestion.value} `;
-        buffer.setText(newValue);
+
+        const command = slashCommands.find((cmd) => cmd.name === commandName);
+        // Make sure completion isn't the original command when command.completion hasn't happened yet.
+        if (command && command.completion && suggestion !== commandName) {
+          const newValue = `${base}${commandName} ${suggestion}`;
+          if (newValue === query) {
+            handleSubmitAndClear(newValue);
+          } else {
+            buffer.setText(newValue);
+          }
+        } else {
+          const newValue = base + suggestion;
+          buffer.setText(newValue);
+          handleSubmitAndClear(newValue);
+        }
       } else {
         const atIndex = query.lastIndexOf('@');
         if (atIndex === -1) return;
@@ -132,7 +145,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         buffer.replaceRangeByOffset(
           autoCompleteStartIndex,
           buffer.text.length,
-          selectedSuggestion.value,
+          suggestion,
         );
         resetCompletionState();
       }
@@ -147,7 +160,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
       const query = buffer.text;
 
-      if (key.name === '!' && query === '' && !completion.showSuggestions) {
+      if (key.sequence === '!' && query === '' && !completion.showSuggestions) {
         setShellModeActive(!shellModeActive);
         buffer.setText(''); // Clear the '!' from input
         return true;
@@ -278,7 +291,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         const [row, col] = buffer.cursor;
         const line = buffer.lines[row];
         const charBefore = col > 0 ? cpSlice(line, col - 1, col) : '';
-        if (key.ctrl || charBefore === '\\' || key.paste) {
+        if (key.ctrl || key.meta || charBefore === '\\' || key.paste) {
           // Ctrl+Enter or escaped newline
           if (charBefore === '\\') {
             buffer.backspace();

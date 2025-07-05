@@ -4,9 +4,8 @@ name: E2E Tests
 
 on:
   push:
-    branches: [main, release]
-  pull_request:
-    branches: [main, release]
+    branches: [main]
+  merge_group:
 
 jobs:
   e2e-test:

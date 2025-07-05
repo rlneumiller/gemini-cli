@@ -54,7 +54,7 @@ import {
   ApprovalMode,
   isEditorAvailable,
   EditorType,
-} from '@gemini-cli/core';
+} from '@google/gemini-cli-core';
 import { validateAuthMethod } from '../config/auth.js';
 import { useLogger } from './hooks/useLogger.js';
 import { StreamingContext } from './contexts/StreamingContext.js';
@@ -71,6 +71,7 @@ import { checkForUpdates } from './utils/updateCheck.js';
 import ansiEscapes from 'ansi-escapes';
 import { OverflowProvider } from './contexts/OverflowContext.js';
 import { ShowMoreLines } from './components/ShowMoreLines.js';
+import { PrivacyNotice } from './privacy/PrivacyNotice.js';
 
 const CTRL_EXIT_PROMPT_DURATION_MS = 1000;
 
@@ -117,6 +118,7 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
   const [editorError, setEditorError] = useState<string | null>(null);
   const [footerHeight, setFooterHeight] = useState<number>(0);
   const [corgiMode, setCorgiMode] = useState(false);
+  const [currentModel, setCurrentModel] = useState(config.getModel());
   const [shellModeActive, setShellModeActive] = useState(false);
   const [showErrorDetails, setShowErrorDetails] = useState<boolean>(false);
   const [showToolDescriptions, setShowToolDescriptions] =
@@ -129,6 +131,11 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
   const [ctrlDPressedOnce, setCtrlDPressedOnce] = useState(false);
   const ctrlDTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [constrainHeight, setConstrainHeight] = useState<boolean>(true);
+  const [showPrivacyNotice, setShowPrivacyNotice] = useState<boolean>(false);
+
+  const openPrivacyNotice = useCallback(() => {
+    setShowPrivacyNotice(true);
+  }, []);
 
   const errorCount = useMemo(
     () => consoleMessages.filter((msg) => msg.type === 'error').length,
@@ -146,7 +153,6 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
     isAuthDialogOpen,
     openAuthDialog,
     handleAuthSelect,
-    handleAuthHighlight,
     isAuthenticating,
     cancelAuthentication,
   } = useAuthCommand(settings, setAuthError, config);
@@ -185,6 +191,7 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
         process.cwd(),
         config.getDebugMode(),
         config.getFileService(),
+        config.getExtensionContextFilePaths(),
       );
       config.setUserMemory(memoryContent);
       config.setGeminiMdFileCount(fileCount);
@@ -215,6 +222,45 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
     }
   }, [config, addItem]);
 
+  // Watch for model changes (e.g., from Flash fallback)
+  useEffect(() => {
+    const checkModelChange = () => {
+      const configModel = config.getModel();
+      if (configModel !== currentModel) {
+        setCurrentModel(configModel);
+      }
+    };
+
+    // Check immediately and then periodically
+    checkModelChange();
+    const interval = setInterval(checkModelChange, 1000); // Check every second
+
+    return () => clearInterval(interval);
+  }, [config, currentModel]);
+
+  // Set up Flash fallback handler
+  useEffect(() => {
+    const flashFallbackHandler = async (
+      currentModel: string,
+      fallbackModel: string,
+    ): Promise<boolean> => {
+      // Add message to UI history
+      addItem(
+        {
+          type: MessageType.INFO,
+          text: `⚡ Slow response times detected. Automatically switching from ${currentModel} to ${fallbackModel} for faster responses for the remainder of this session.
+⚡ To avoid this you can either upgrade to Standard tier. See: https://goo.gle/set-up-gemini-code-assist
+⚡ Or you can utilize a Gemini API Key. See: https://goo.gle/gemini-cli-docs-auth#gemini-api-key
+⚡ You can switch authentication methods by typing /auth`,
+        },
+        Date.now(),
+      );
+      return true; // Always accept the fallback
+    };
+
+    config.setFlashFallbackHandler(flashFallbackHandler);
+  }, [config, addItem]);
+
   const {
     handleSlashCommand,
     slashCommands,
@@ -236,11 +282,11 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
     toggleCorgiMode,
     showToolDescriptions,
     setQuittingMessages,
+    openPrivacyNotice,
   );
   const pendingHistoryItems = [...pendingSlashCommandHistoryItems];
 
   const { rows: terminalHeight, columns: terminalWidth } = useTerminalSize();
-  const lastTerminalWidth = useRef(terminalWidth);
   const isInitialMount = useRef(true);
   const { stdin, setRawMode } = useStdin();
   const isValidPath = useCallback((filePath: string): boolean => {
@@ -296,13 +342,21 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
   );
 
   useInput((input: string, key: InkKeyType) => {
+    let enteringConstrainHeightMode = false;
+    if (!constrainHeight) {
+      // Automatically re-enter constrain height mode if the user types
+      // anything. When constrainHeight==false, the user will experience
+      // significant flickering so it is best to disable it immediately when
+      // the user starts interacting with the app.
+      enteringConstrainHeightMode = true;
+      setConstrainHeight(true);
+    }
+
     if (key.ctrl && input === 'o') {
       setShowErrorDetails((prev) => !prev);
-      refreshStatic();
     } else if (key.ctrl && input === 't') {
       const newValue = !showToolDescriptions;
       setShowToolDescriptions(newValue);
-      refreshStatic();
 
       const mcpServers = config.getMcpServers();
       if (Object.keys(mcpServers || {}).length > 0) {
@@ -316,8 +370,8 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
         return;
       }
       handleExit(ctrlDPressedOnce, setCtrlDPressedOnce, ctrlDTimerRef);
-    } else if (key.ctrl && input === 's') {
-      setConstrainHeight((prev) => !prev);
+    } else if (key.ctrl && input === 's' && !enteringConstrainHeightMode) {
+      setConstrainHeight(false);
     }
   });
 
@@ -364,6 +418,7 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
     shellModeActive,
     getPreferredEditor,
     onAuthError,
+    performMemoryRefresh,
   );
   pendingHistoryItems.push(...pendingGeminiHistoryItems);
   const { elapsedTime, currentLoadingPhrase } =
@@ -453,33 +508,14 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
 
     // debounce so it doesn't fire up too often during resize
     const handler = setTimeout(() => {
-      if (terminalWidth < lastTerminalWidth.current) {
-        setStaticNeedsRefresh(true);
-      }
-      lastTerminalWidth.current = terminalWidth;
+      setStaticNeedsRefresh(false);
+      refreshStatic();
     }, 300);
 
     return () => {
       clearTimeout(handler);
     };
-  }, [terminalWidth]);
-
-  useEffect(() => {
-    if (!pendingHistoryItems.length) {
-      return;
-    }
-
-    const pendingItemDimensions = measureElement(
-      pendingHistoryItemRef.current!,
-    );
-
-    // If our pending history item happens to exceed the terminal height we will most likely need to refresh
-    // our static collection to ensure no duplication or tearing. This is currently working around a core bug
-    // in Ink which we have a PR out to fix: https://github.com/vadimdemedes/ink/pull/717
-    if (pendingItemDimensions.height > availableTerminalHeight) {
-      setStaticNeedsRefresh(true);
-    }
-  }, [pendingHistoryItems.length, availableTerminalHeight, streamingState]);
+  }, [terminalWidth, terminalHeight, refreshStatic]);
 
   useEffect(() => {
     if (streamingState === StreamingState.Idle && staticNeedsRefresh) {
@@ -524,13 +560,16 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
     );
   }
   const mainAreaWidth = Math.floor(terminalWidth * 0.9);
-  const debugConsoleMaxHeight = Math.max(terminalHeight * 0.2, 5);
+  const debugConsoleMaxHeight = Math.floor(Math.max(terminalHeight * 0.2, 5));
   // Arbitrary threshold to ensure that items in the static area are large
   // enough but not too large to make the terminal hard to use.
   const staticAreaMaxItemHeight = Math.max(terminalHeight * 4, 100);
   return (
     <StreamingContext.Provider value={streamingState}>
       <Box flexDirection="column" marginBottom={1} width="90%">
+        {/* Move UpdateNotification outside Static so it can re-render when updateMessage changes */}
+        {updateMessage && <UpdateNotification message={updateMessage} />}
+
         {/*
          * The Static component is an Ink intrinsic in which there can only be 1 per application.
          * Because of this restriction we're hacking it slightly by having a 'header' item here to
@@ -547,8 +586,7 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
           items={[
             <Box flexDirection="column" key="header">
               <Header terminalWidth={terminalWidth} />
-              <Tips config={config} />
-              {updateMessage && <UpdateNotification message={updateMessage} />}
+              {!settings.merged.hideTips && <Tips config={config} />}
             </Box>,
             ...history.map((h) => (
               <HistoryItemDisplay
@@ -635,7 +673,6 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
             <Box flexDirection="column">
               <AuthDialog
                 onSelect={handleAuthSelect}
-                onHighlight={handleAuthHighlight}
                 settings={settings}
                 initialErrorMessage={authError}
               />
@@ -653,6 +690,11 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
                 onExit={exitEditorDialog}
               />
             </Box>
+          ) : showPrivacyNotice ? (
+            <PrivacyNotice
+              onExit={() => setShowPrivacyNotice(false)}
+              config={config}
+            />
           ) : (
             <>
               <LoadingIndicator
@@ -709,14 +751,16 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
 
               {showErrorDetails && (
                 <OverflowProvider>
-                  <DetailedMessagesDisplay
-                    messages={filteredConsoleMessages}
-                    maxHeight={
-                      constrainHeight ? debugConsoleMaxHeight : undefined
-                    }
-                    width={inputWidth}
-                  />
-                  <ShowMoreLines constrainHeight={constrainHeight} />
+                  <Box flexDirection="column">
+                    <DetailedMessagesDisplay
+                      messages={filteredConsoleMessages}
+                      maxHeight={
+                        constrainHeight ? debugConsoleMaxHeight : undefined
+                      }
+                      width={inputWidth}
+                    />
+                    <ShowMoreLines constrainHeight={constrainHeight} />
+                  </Box>
                 </OverflowProvider>
               )}
 
@@ -770,7 +814,7 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
             </Box>
           )}
           <Footer
-            model={config.getModel()}
+            model={currentModel}
             targetDir={config.getTargetDir()}
             debugMode={config.getDebugMode()}
             branchName={branchName}
@@ -781,11 +825,7 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
             showMemoryUsage={
               config.getDebugMode() || config.getShowMemoryUsage()
             }
-            promptTokenCount={sessionStats.currentResponse.promptTokenCount}
-            candidatesTokenCount={
-              sessionStats.currentResponse.candidatesTokenCount
-            }
-            totalTokenCount={sessionStats.currentResponse.totalTokenCount}
+            promptTokenCount={sessionStats.lastPromptTokenCount}
           />
         </Box>
       </Box>

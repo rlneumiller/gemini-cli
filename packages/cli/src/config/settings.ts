@@ -13,7 +13,7 @@ import {
   BugCommandSettings,
   TelemetrySettings,
   AuthType,
-} from '@gemini-cli/core';
+} from '@google/gemini-cli-core';
 import stripJsonComments from 'strip-json-comments';
 import { DefaultLight } from '../ui/themes/default-light.js';
 import { DefaultDark } from '../ui/themes/default.js';
@@ -49,9 +49,11 @@ export interface Settings {
   contextFileName?: string | string[];
   accessibility?: AccessibilitySettings;
   telemetry?: TelemetrySettings;
+  usageStatisticsEnabled?: boolean;
   preferredEditor?: string;
   bugCommand?: BugCommandSettings;
   checkpointing?: CheckpointingSettings;
+  autoConfigureMaxOldSpaceSize?: boolean;
 
   // Git-aware file filtering settings
   fileFiltering?: {
@@ -61,6 +63,7 @@ export interface Settings {
 
   // UI setting. Does not display the ANSI-controlled terminal title.
   hideWindowTitle?: boolean;
+  hideTips?: boolean;
 
   // Run in IDE mode.
   ideMode?: boolean;
